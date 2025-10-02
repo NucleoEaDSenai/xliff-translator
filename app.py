@@ -1,4 +1,4 @@
-import os, time, re
+import os, time, re, base64
 from copy import deepcopy
 from typing import List, Tuple, Optional
 from pathlib import Path
@@ -19,23 +19,31 @@ h1,h2,h3,p,span,div,label,small {{ color:#fff !important; }}
 .stProgress > div > div > div > div {{ background-color: {PRIMARY}; }}
 hr {{ border: 0; border-top: 1px solid #222; margin: 24px 0; }}
 .footer {{ text-align:center; color:#aaa; font-size:12px; margin-top:32px; }}
-.header {{ display:flex; align-items:center; gap:16px; margin-bottom:8px; }}
-/* Selectbox amplo e sem corte de texto */
+/* Select largo e sem truncar */
 .stSelectbox > div {{ width: 100% !important; }}
-div[data-baseweb="select"] {{ min-width: 640px !important; }}
+div[data-baseweb="select"] {{ min-width: 720px !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Logo ----------
-logo_path = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
-c1, c2 = st.columns([1.2, 6])
-with c1:
-    if logo_path.exists():
-        st.image(str(logo_path), width=300)
-with c2:
-    st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
+# ---------- Logo centralizada (sem corte) ----------
+def show_logo():
+    p = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
+    if p.exists():
+        b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+        st.markdown(
+            f"""
+            <div style="width:100%;display:flex;justify-content:center;margin-bottom:4px;">
+              <img src="data:image/png;base64,{b64}" style="max-width:360px;width:100%;height:auto;display:block;" />
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+show_logo()
+st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor XLIFF</h1>", unsafe_allow_html=True)
 st.caption("Firjan SENAI · Dark mode · Tradução completa com preservação de tags")
 
+# ---------- Utilidades ----------
 def safe_str(x)->str:
     return "" if x is None else str(x)
 
@@ -138,8 +146,8 @@ def translate_accessibility_attrs(root:ET._Element, lang:str, throttle:float):
                     el.attrib[k]=translate_text_unit(val, lang)
                     if throttle: time.sleep(throttle)
 
-# ---------- Lista com nomes por extenso (PT) ----------
-pt_names = {
+# ---------- Nomes por extenso (PT) e normalização do retorno do Google ----------
+PT_FULL = {
     "af":"Africâner","sq":"Albanês","am":"Amárico","ar":"Árabe","hy":"Armênio","az":"Azerbaijano",
     "eu":"Basco","be":"Bielorrusso","bn":"Bengali","bs":"Bósnio","bg":"Búlgaro","ca":"Catalão",
     "ceb":"Cebuano","ny":"Chichewa","zh-CN":"Chinês (Simplificado)","zh-TW":"Chinês (Tradicional)",
@@ -158,24 +166,33 @@ pt_names = {
     "so":"Somali","es":"Espanhol","su":"Sundanês","sw":"Suaíli","sv":"Sueco","tl":"Filipino",
     "tg":"Tadjique","ta":"Tâmil","te":"Télugo","th":"Tailandês","tr":"Turco","uk":"Ucraniano",
     "ur":"Urdu","uz":"Uzbeque","vi":"Vietnamita","cy":"Galês","xh":"Xhosa","yi":"Iídiche",
-    "yo":"Iorubá","zu":"Zulu","mt":"Maltês"
+    "yo":"Iorubá","zu":"Zulu"
 }
 
-# Gera lista a partir dos suportados do Google, mas mostrando o nome PT completo quando houver
-try:
-    supported = GoogleTranslator().get_supported_languages(as_dict=True)  # {'en': 'english', ...}
-except Exception:
-    supported = {"en":"english","pt":"portuguese","es":"spanish","fr":"french","de":"german","it":"italian","ja":"japanese","zh-CN":"chinese (simplified)","zh-TW":"chinese (traditional)","ko":"korean"}
+def get_google_lang_pairs():
+    try:
+        d = GoogleTranslator().get_supported_languages(as_dict=True)
+        k, v = next(iter(d.items()))
+        # Caso 1: name→code (ex.: {"english":"en"})
+        if isinstance(v, str) and len(v) <= 10 and v.isalpha() or "-" in v:
+            pairs = [(v, k)]  # (code, name)
+            for name, code in list(d.items())[1:]:
+                pairs.append((code, name))
+        else:
+            # Caso 2: code→name
+            pairs = list(d.items())  # (code, name)
+    except Exception:
+        pairs = [("en","english"),("pt","portuguese"),("es","spanish"),("fr","french"),("de","german"),("it","italian")]
+    return pairs
 
+pairs = get_google_lang_pairs()  # [(code, eng_name), ...]
 options = []
-for code, engname in supported.items():
-    label = pt_names.get(code, engname.capitalize())
+for code, engname in pairs:
+    label = PT_FULL.get(code, engname.capitalize())
     options.append((label, code))
-
 options.sort(key=lambda x: x[0])
 
-# Select ocupa a largura toda, evitando cortes
-language_label = st.selectbox("Idioma de destino", [lbl for lbl, _ in options])
+language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in options])
 lang_code = dict(options)[language_label]
 
 c_thr = st.columns([1])[0]
