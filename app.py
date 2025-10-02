@@ -25,7 +25,6 @@ div[data-baseweb="select"] {{ min-width: 720px !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Logo centralizada (sem corte) ----------
 def show_logo():
     p = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
     if p.exists():
@@ -41,7 +40,7 @@ def show_logo():
 
 show_logo()
 st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor de Cursos - Articulate Rise</h1>", unsafe_allow_html=True)
-st.caption("Firjan SENAI · Tradução completa de cursos do Português para outras línguas")
+st.caption("Tradução completa de cursos do Português para outras línguas")
 
 # ---------- Utilidades ----------
 def safe_str(x)->str:
@@ -122,21 +121,19 @@ def ensure_target_for_source(src:ET._Element, tgt:Optional[ET._Element])->ET._El
     qn=ET.QName(src); tag=qn.localname.replace("source","target")
     return ET.SubElement(src.getparent(), f"{{{qn.namespace}}}{tag}") if qn.namespace else ET.SubElement(src.getparent(),"target")
 
-def translate_node_texts(elem:ET._Element, lang:str, throttle:float):
+def translate_node_texts(elem:ET._Element, lang:str):
     if elem.text is not None and safe_str(elem.text).strip():
         elem.text = translate_text_unit(elem.text, lang)
-        if throttle: time.sleep(throttle)
     for child in list(elem):
-        translate_node_texts(child, lang, throttle)
+        translate_node_texts(child, lang)
         if child.tail is not None and safe_str(child.tail).strip():
             child.tail = translate_text_unit(child.tail, lang)
-            if throttle: time.sleep(throttle)
 
-def translate_all_notes(root:ET._Element, lang:str, throttle:float):
+def translate_all_notes(root:ET._Element, lang:str):
     for note in root.findall(".//{*}note"):
-        translate_node_texts(note, lang, throttle)
+        translate_node_texts(note, lang)
 
-def translate_accessibility_attrs(root:ET._Element, lang:str, throttle:float):
+def translate_accessibility_attrs(root:ET._Element, lang:str):
     ATTRS=("title","alt","aria-label")
     for el in root.iter():
         for k in ATTRS:
@@ -144,7 +141,6 @@ def translate_accessibility_attrs(root:ET._Element, lang:str, throttle:float):
                 val=safe_str(el.attrib.get(k))
                 if val.strip():
                     el.attrib[k]=translate_text_unit(val, lang)
-                    if throttle: time.sleep(throttle)
 
 # ---------- Nomes por extenso (PT) e normalização do retorno do Google ----------
 PT_FULL = {
@@ -173,19 +169,17 @@ def get_google_lang_pairs():
     try:
         d = GoogleTranslator().get_supported_languages(as_dict=True)
         k, v = next(iter(d.items()))
-        # Caso 1: name→code (ex.: {"english":"en"})
-        if isinstance(v, str) and len(v) <= 10 and v.isalpha() or "-" in v:
-            pairs = [(v, k)]  # (code, name)
+        if isinstance(v, str) and (len(v) <= 10 and v.isalpha() or "-" in v):
+            pairs = [(v, k)]
             for name, code in list(d.items())[1:]:
                 pairs.append((code, name))
         else:
-            # Caso 2: code→name
-            pairs = list(d.items())  # (code, name)
+            pairs = list(d.items())
     except Exception:
         pairs = [("en","english"),("pt","portuguese"),("es","spanish"),("fr","french"),("de","german"),("it","italian")]
     return pairs
 
-pairs = get_google_lang_pairs()  # [(code, eng_name), ...]
+pairs = get_google_lang_pairs()
 options = []
 for code, engname in pairs:
     label = PT_FULL.get(code, engname.capitalize())
@@ -195,26 +189,22 @@ options.sort(key=lambda x: x[0])
 language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in options])
 lang_code = dict(options)[language_label]
 
-c_thr = st.columns([1])[0]
-with c_thr:
-    throttle = st.number_input("Intervalo (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1)
-
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
 run = st.button("Traduzir arquivo")
 
-def process(data: bytes, lang_code: str, throttle: float):
+def process(data: bytes, lang_code: str):
     parser = ET.XMLParser(remove_blank_text=False)
     root = ET.fromstring(data, parser=parser)
     pairs = iter_source_target_pairs(root)
     for i,(src,tgt) in enumerate(pairs, start=1):
-        translate_node_texts(src, lang_code, throttle)
+        translate_node_texts(src, lang_code)
         tgt = ensure_target_for_source(src, tgt)
         tgt.clear()
         for ch in list(src): tgt.append(deepcopy(ch))
         tgt.text = safe_str(src.text)
         if len(src): tgt[-1].tail = safe_str(src[-1].tail)
-    translate_all_notes(root, lang_code, throttle)
-    translate_accessibility_attrs(root, lang_code, throttle)
+    translate_all_notes(root, lang_code)
+    translate_accessibility_attrs(root, lang_code)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
 
 if run:
@@ -230,7 +220,7 @@ if run:
         total_pairs = 0
     prog = st.progress(0.0); status = st.empty()
     try:
-        out_bytes = process(data, lang_code, throttle)
+        out_bytes = process(data, lang_code)
         prog.progress(1.0)
         st.success("Tradução concluída!")
         base = os.path.splitext(uploaded.name)[0]
