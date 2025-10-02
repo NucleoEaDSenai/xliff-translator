@@ -1,21 +1,24 @@
 import os
+import io
+import re
 import time
+import zipfile
 from copy import deepcopy
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 import streamlit as st
+import pandas as pd
 from lxml import etree as ET
 from deep_translator import GoogleTranslator
-import re
 
 # -------------------- CONFIG UI --------------------
-st.set_page_config(page_title="XLIFF → English (Google)", page_icon="🌍", layout="centered")
+st.set_page_config(page_title="XLIFF → Multilingual (Google) + Glossary", page_icon="🌍", layout="centered")
 
 PRIMARY = "#83c7e5"  # Azul SENAI
 st.markdown(f"""
 <style>
 body {{ background:#000; color:#fff; }}
-.block-container {{ padding-top: 1.2rem; max-width: 960px; }}
+.block-container {{ padding-top: 1.2rem; max-width: 1040px; }}
 h1,h2,h3,p,span,div,label {{ color:#fff !important; }}
 .stButton>button {{
   background:#333; color:{PRIMARY}; font-weight:700; border:none; border-radius:8px; padding:.6rem 1rem;
@@ -24,19 +27,17 @@ h1,h2,h3,p,span,div,label {{ color:#fff !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 XLIFF Translator — Google (full content)")
-st.caption("Traduz .xlf/.xliff completos (1.2/2.0), preservando tags inline. Sobrescreve source/target, traduz <note> e atributos title/alt/aria-label.")
+st.title("🌍 XLIFF Translator — Multilingual (Google) + Glossary")
+st.caption("Traduz .xlf/.xliff completos (1.2/2.0), preservando tags inline. Suporte a várias línguas e glossário com termos bloqueados/ preferidos.")
 
 # -------------------- HELPERS ROBUSTOS --------------------
 def safe_str(x) -> str:
-    """Garante string (evita None)."""
     return "" if x is None else str(x)
 
 # placeholders/comandos que NÃO devem ser traduzidos
 PLACEHOLDER_RE = re.compile(r"(\{\{.*?\}\}|\{.*?\}|%s|%d|%\(\w+\)s)")
 
 def protect_nontranslatable(text: str):
-    """Protege {…}, {{…}}, %s etc. com tokens §§K#§§ para não serem mexidos pelo tradutor."""
     text = safe_str(text)
     if not text:
         return "", []
@@ -62,22 +63,123 @@ def restore_nontranslatable(text: str, tokens):
     except Exception:
         return text
 
-def translate_text_unit(text: str, target_lang: str = "en") -> str:
-    """Tradução de uma unidade de texto com proteção de placeholders (Google via deep-translator)."""
+# ---------- Glossário ----------
+class Glossary:
+    """
+    Glossário com termos em origem (source).
+    - mode:
+        - keep: não traduzir -> restaurar exatamente o source
+        - map: substituir pela tradução preferida (preferred)
+    - match:
+        - word (padrão): casa palavra inteira (respeita fronteiras)
+        - substr: substring literal
+    Implementação: protegemos os termos ANTES da tradução com placeholders §§G{idx}§§
+    e RESTAURAMOS depois com o target (preferred ou source).
+    """
+    def __init__(self, rows: List[Dict]):
+        self.rules = []  # cada item: {pattern, replacement, idx}
+        self._build(rows)
+
+    def _build(self, rows: List[Dict]):
+        self.rules = []
+        idx = 0
+        for r in rows:
+            src = safe_str(r.get("source", "")).strip()
+            if not src:
+                continue
+            mode = (safe_str(r.get("mode", "keep")).lower()).strip()
+            match = (safe_str(r.get("match", "word")).lower()).strip()
+            preferred = safe_str(r.get("preferred", "")).strip()  # opcional
+
+            if mode not in ("keep", "map"):
+                mode = "keep"
+            if match not in ("word", "substr"):
+                match = "word"
+
+            # regex para match:
+            if match == "word":
+                # palavra inteira (boundaries). Escapar src para literal.
+                pattern = re.compile(rf"\b{re.escape(src)}\b", flags=re.IGNORECASE)
+            else:
+                # substring literal
+                pattern = re.compile(re.escape(src), flags=re.IGNORECASE)
+
+            replacement = src if mode == "keep" else (preferred if preferred else src)
+            self.rules.append({"pattern": pattern, "replacement": replacement, "idx": idx})
+            idx += 1
+
+    def protect(self, text: str) -> Tuple[str, Dict[str, str]]:
+        """
+        Substitui cada termo encontrado por um marcador §§G{n}§§.
+        Retorna: (texto_protegido, mapa_de_restauro)
+        """
+        if not self.rules:
+            return text, {}
+        out = text
+        restore_map: Dict[str, str] = {}
+        for r in self.rules:
+            token = f"§§G{r['idx']}§§"
+            # substitui todas as ocorrências do pattern por token
+            out, n = r["pattern"].subn(token, out)
+            if n > 0:
+                restore_map[token] = r["replacement"]
+        return out, restore_map
+
+    @staticmethod
+    def restore(text: str, restore_map: Dict[str, str]) -> str:
+        if not restore_map:
+            return text
+        out = text
+        for token, val in restore_map.items():
+            out = out.replace(token, val)
+        return out
+
+def load_glossary_from_csv(file) -> Glossary:
+    """
+    CSV com colunas: source, preferred (opcional), mode (keep|map), match (word|substr)
+    """
+    try:
+        df = pd.read_csv(file)
+    except Exception:
+        file.seek(0)
+        df = pd.read_csv(file, sep=";")
+    # normaliza colunas
+    for c in ["source", "preferred", "mode", "match"]:
+        if c not in df.columns:
+            df[c] = ""
+    rows = df[["source", "preferred", "mode", "match"]].to_dict(orient="records")
+    return Glossary(rows)
+
+# ---------- Tradução base (Google) com placeholders e glossário ----------
+def translate_text_unit(text: str, target_lang: str, glossary: Optional[Glossary] = None) -> str:
     text = safe_str(text)
     if not text.strip():
         return text
+
+    # 1) protege placeholders técnicos
     t, toks = protect_nontranslatable(text)
+
+    # 2) protege termos do glossário
+    restore_map = {}
+    if glossary:
+        t, restore_map = glossary.protect(t)
+
+    # 3) traduz
     out = t
     try:
         tr = GoogleTranslator(source="auto", target=target_lang).translate(t)
         out = safe_str(tr)
     except Exception:
-        # fallback mantém t
-        out = t
+        out = t  # fallback: mantém original
+
+    # 4) restaura glossário (preferidos / não traduzir)
+    out = Glossary.restore(out, restore_map)
+
+    # 5) restaura placeholders técnicos
     out = restore_nontranslatable(out, toks)
     return safe_str(out)
 
+# ---------- XLIFF / XML helpers ----------
 def get_namespaces(root) -> dict:
     nsmap = {}
     if root.nsmap:
@@ -94,25 +196,19 @@ def detect_version(root) -> str:
     return "1.2"
 
 def iter_source_target_pairs(root) -> List[Tuple[ET._Element, Optional[ET._Element]]]:
-    """
-    Retorna pares (source_elem, target_elem) cobrindo XLIFF 1.2 (<trans-unit>) e 2.0 (<unit>/<segment>).
-    Traduzindo todos os segmentos (todas páginas/blocos), não só títulos.
-    """
     ns = get_namespaces(root)
     version = detect_version(root)
     pairs: List[Tuple[ET._Element, Optional[ET._Element]]] = []
-
     if version == "2.0":
         units = root.xpath(".//ns:unit", namespaces=ns) or root.findall(".//unit")
         for u in units:
-            segments = u.xpath(".//ns:segment", namespaces=ns) or u.findall(".//segment")
-            for seg in segments:
+            segs = u.xpath(".//ns:segment", namespaces=ns) or u.findall(".//segment")
+            for seg in segs:
                 src = seg.find(".//{*}source")
                 tgt = seg.find(".//{*}target")
                 if src is not None:
                     pairs.append((src, tgt))
     else:
-        # 1.2
         units = root.xpath(".//ns:trans-unit", namespaces=ns) or root.findall(".//trans-unit")
         for u in units:
             src = u.find(".//{*}source")
@@ -122,148 +218,142 @@ def iter_source_target_pairs(root) -> List[Tuple[ET._Element, Optional[ET._Eleme
     return pairs
 
 def ensure_target_for_source(src: ET._Element, tgt: Optional[ET._Element]) -> ET._Element:
-    """Garante que exista <target> “irmão” do <source>, preservando namespace."""
     if tgt is not None:
         return tgt
     qn = ET.QName(src)
     tag = qn.localname.replace("source", "target")
     return ET.SubElement(src.getparent(), f"{{{qn.namespace}}}{tag}") if qn.namespace else ET.SubElement(src.getparent(), "target")
 
-def translate_node_texts(elem: ET._Element, target_lang: str = "en", throttle_secs: float = 0.0):
-    """
-    Traduz recursivamente elem.text e, para cada filho, traduz child.text e child.tail.
-    NÃO altera nomes de tags/atributos; preserva estrutura e tags inline (<g>, <ph>, <mrk>, etc).
-    À prova de None.
-    """
-    try:
-        if elem.text is not None and safe_str(elem.text).strip():
-            elem.text = translate_text_unit(elem.text, target_lang)
+def translate_node_texts(elem: ET._Element, target_lang: str, glossary: Optional[Glossary], throttle_secs: float = 0.0):
+    # traduz o texto do nó
+    if elem.text is not None and safe_str(elem.text).strip():
+        elem.text = translate_text_unit(elem.text, target_lang, glossary)
+        if throttle_secs:
+            time.sleep(throttle_secs)
+
+    # percorre filhos
+    for child in list(elem):
+        translate_node_texts(child, target_lang, glossary, throttle_secs)
+        if child.tail is not None and safe_str(child.tail).strip():
+            child.tail = translate_text_unit(child.tail, target_lang, glossary)
             if throttle_secs:
                 time.sleep(throttle_secs)
-    except Exception:
-        elem.text = safe_str(elem.text)
 
-    for child in list(elem):
-        translate_node_texts(child, target_lang, throttle_secs)
-        try:
-            if child.tail is not None and safe_str(child.tail).strip():
-                child.tail = translate_text_unit(child.tail, target_lang)
-                if throttle_secs:
-                    time.sleep(throttle_secs)
-        except Exception:
-            child.tail = safe_str(child.tail)
+def translate_all_notes(root: ET._Element, target_lang: str, glossary: Optional[Glossary], throttle_secs: float = 0.0):
+    for note in root.findall(".//{*}note"):
+        translate_node_texts(note, target_lang, glossary, throttle_secs)
 
-def translate_all_notes(root: ET._Element, target_lang: str = "en", throttle_secs: float = 0.0):
-    """Traduz todo conteúdo de <note> (texto + tails) em qualquer nível."""
-    notes = root.findall(".//{*}note")
-    for i, note in enumerate(notes, start=1):
-        translate_node_texts(note, target_lang, throttle_secs)
-
-def translate_accessibility_attrs(root: ET._Element, target_lang: str = "en", throttle_secs: float = 0.0):
-    """
-    Traduz apenas atributos 'falantes' de acessibilidade/UX (title, alt, aria-label).
-    Não toca em IDs, refs, estados e metadados técnicos.
-    """
+def translate_accessibility_attrs(root: ET._Element, target_lang: str, glossary: Optional[Glossary], throttle_secs: float = 0.0):
     ATTRS = ("title", "alt", "aria-label")
     for el in root.iter():
         for key in ATTRS:
             if key in el.attrib:
                 val = safe_str(el.attrib.get(key))
                 if val.strip():
-                    el.attrib[key] = translate_text_unit(val, target_lang)
+                    el.attrib[key] = translate_text_unit(val, target_lang, glossary)
                     if throttle_secs:
                         time.sleep(throttle_secs)
+
+def translate_xlf_bytes(data: bytes, target_lang: str, throttle: float, glossary: Optional[Glossary]) -> bytes:
+    parser = ET.XMLParser(remove_blank_text=False)
+    root = ET.fromstring(data, parser=parser)
+
+    # 1) segmentos (<source>/<target>)
+    pairs = iter_source_target_pairs(root)
+    total = len(pairs)
+    for i, (src, tgt) in enumerate(pairs, start=1):
+        translate_node_texts(src, target_lang, glossary, throttle)
+        tgt = ensure_target_for_source(src, tgt)
+        tgt.clear()
+        for ch in list(src):
+            tgt.append(deepcopy(ch))
+        tgt.text = safe_str(src.text)
+        if len(src):
+            tgt[-1].tail = safe_str(src[-1].tail)
+
+    # 2) notas
+    translate_all_notes(root, target_lang, glossary, throttle)
+
+    # 3) atributos de acessibilidade
+    translate_accessibility_attrs(root, target_lang, glossary, throttle)
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
 
 # -------------------- UI CONTROLS --------------------
 col1, col2 = st.columns(2)
 with col1:
-    target_lang = st.text_input("Idioma de destino", value="en", help="Ex.: en, es, fr, de… (padrão: en)")
+    target_langs = st.multiselect(
+        "Idiomas de destino",
+        options=["en","es","fr","de","it","pt","nl","sv","ru","ja","ko","zh-CN","zh-TW"],
+        default=["en"],
+        help="Selecione 1 ou mais línguas. Se escolher várias, o app baixará um .zip com todas."
+    )
 with col2:
-    throttle = st.number_input("Intervalo entre chamadas (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1, help="Use 0.2–0.5s se notar bloqueios no Google")
+    throttle = st.number_input(
+        "Intervalo entre chamadas (s)",
+        min_value=0.0, max_value=2.0, value=0.0, step=0.1,
+        help="Se notar bloqueios do Google, use 0.2–0.5s"
+    )
 
-uploaded = st.file_uploader("📂 Selecione o arquivo .xlf/.xliff do Rise", type=["xlf", "xliff"])
-run = st.button("Traduzir arquivo")
+uploaded = st.file_uploader("📂 Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
+
+gloss_file = st.file_uploader(
+    "📘 Glossário (CSV opcional) — colunas: source, preferred, mode [keep|map], match [word|substr]",
+    type=["csv"]
+)
+
+run = st.button("Traduzir arquivo(s)")
 
 # -------------------- PROCESS --------------------
 if run:
     if not uploaded:
         st.error("Envie um arquivo .xlf/.xliff.")
         st.stop()
+    if not target_langs:
+        st.error("Selecione pelo menos um idioma de destino.")
+        st.stop()
 
     data = uploaded.read()
 
-    # Pré-contagem para barra de progresso (segmentos)
+    # Carrega glossário se houver
+    glossary = None
+    if gloss_file is not None:
+        try:
+            glossary = load_glossary_from_csv(gloss_file)
+            st.success("Glossário carregado com sucesso.")
+        except Exception as e:
+            st.warning(f"Não foi possível ler o glossário: {e}")
+
+    # Prévia: contagem de segmentos
     try:
         tmp_root = ET.fromstring(data, parser=ET.XMLParser(remove_blank_text=False))
         total_pairs = len(iter_source_target_pairs(tmp_root))
+        st.write(f"Segmentos detectados: **{total_pairs}**")
     except Exception:
         total_pairs = 0
 
-    prog = st.progress(0.0)
-    status = st.empty()
-
-    def _progress(i, total, phase="segments"):
-        if total > 0:
-            pct = min(max(i/total, 0), 1)
-        else:
-            pct = 0.0
-        prog.progress(pct)
-        label = "Traduzindo segmentos" if phase == "segments" else phase
-        status.write(f"{label}: {i}/{total}" if total else f"{label}…")
-
-    try:
-        parser = ET.XMLParser(remove_blank_text=False)
-        root = ET.fromstring(data, parser=parser)
-
-        # 1) SEGMENTOS (source/target) — traduz TUDO e sobrescreve source & target
-        pairs = iter_source_target_pairs(root)
-        total = len(pairs)
-
-        for i, (src, tgt) in enumerate(pairs, start=1):
-            # traduz TODO o conteúdo do <source> recursivamente (text + tails)
-            translate_node_texts(src, target_lang=target_lang, throttle_secs=throttle)
-
-            # garante <target> e copia o conteúdo traduzido do source para o target
-            tgt = ensure_target_for_source(src, tgt)
-            tgt.clear()
-            for ch in list(src):
-                tgt.append(deepcopy(ch))
-            tgt.text = safe_str(src.text)
-            if len(src):
-                tgt[-1].tail = safe_str(src[-1].tail)
-
-            _progress(i, total, "segments")
-
-        # 2) NOTAS
-        notes = root.findall(".//{*}note")
-        total_notes = len(notes)
-        for j, note in enumerate(notes, start=1):
-            translate_node_texts(note, target_lang=target_lang, throttle_secs=throttle)
-            _progress(j, total_notes if total_notes else 1, "notes")
-
-        # 3) ATRIBUTOS (title/alt/aria-label)
-        # Contagem para progresso
-        all_attr_nodes = []
-        ATTRS = ("title", "alt", "aria-label")
-        for el in root.iter():
-            if any(k in el.attrib for k in ATTRS):
-                all_attr_nodes.append(el)
-        total_attrs = len(all_attr_nodes)
-
-        for k, el in enumerate(all_attr_nodes, start=1):
-            for key in ATTRS:
-                if key in el.attrib:
-                    val = safe_str(el.attrib.get(key))
-                    if val.strip():
-                        el.attrib[key] = translate_text_unit(val, target_lang)
-                        if throttle:
-                            time.sleep(throttle)
-            _progress(k, total_attrs if total_attrs else 1, "attributes")
-
-        out_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
-        st.success("✅ Tradução concluída!")
-        out_name = os.path.splitext(uploaded.name)[0] + "-translated.xlf"
-        st.download_button("⬇️ Baixar XLIFF traduzido", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
-
-    except Exception as e:
-        st.error(f"Erro ao traduzir: {e}")
+    # Uma língua → retorna XLF; várias línguas → ZIP
+    if len(target_langs) == 1:
+        lang = target_langs[0]
+        try:
+            out_bytes = translate_xlf_bytes(data, target_lang=lang, throttle=throttle, glossary=glossary)
+            st.success(f"✅ Tradução concluída ({lang}).")
+            base = os.path.splitext(uploaded.name)[0]
+            out_name = f"{base}-{lang}.xlf"
+            st.download_button("⬇️ Baixar XLIFF traduzido", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
+        except Exception as e:
+            st.error(f"Erro ao traduzir: {e}")
+    else:
+        # múltiplas línguas: cria ZIP em memória
+        try:
+            mem = io.BytesIO()
+            with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                base = os.path.splitext(uploaded.name)[0]
+                for lang in target_langs:
+                    out_bytes = translate_xlf_bytes(data, target_lang=lang, throttle=throttle, glossary=glossary)
+                    zf.writestr(f"{base}-{lang}.xlf", out_bytes)
+            mem.seek(0)
+            st.success(f"✅ Traduções concluídas ({', '.join(target_langs)}).")
+            st.download_button("⬇️ Baixar ZIP com XLIFFs", data=mem, file_name="xliff-translated-multilang.zip", mime="application/zip")
+        except Exception as e:
+            st.error(f"Erro ao traduzir: {e}")
