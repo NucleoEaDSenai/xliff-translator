@@ -20,7 +20,6 @@ h1,h2,h3,p,span,div,label,small {{ color:#fff !important; }}
 .stProgress > div > div > div > div {{ background-color: {PRIMARY}; }}
 hr {{ border: 0; border-top: 1px solid #222; margin: 24px 0; }}
 .footer {{ text-align:center; color:#aaa; font-size:12px; margin-top:32px; }}
-/* Select largo e sem truncar */
 .stSelectbox > div {{ width: 100% !important; }}
 div[data-baseweb="select"] {{ min-width: 720px !important; }}
 </style>
@@ -43,7 +42,6 @@ show_logo()
 st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor de Cursos - Articulate Rise</h1>", unsafe_allow_html=True)
 st.caption("Tradução completa de cursos do Português para outras línguas")
 
-# ---------- Utilidades ----------
 def safe_str(x)->str:
     return "" if x is None else str(x)
 
@@ -143,7 +141,6 @@ def translate_accessibility_attrs(root:ET._Element, lang:str):
                 if val.strip():
                     el.attrib[k]=translate_text_unit(val, lang)
 
-# ---------- Nomes por extenso (PT) e normalização do retorno do Google ----------
 PT_FULL = {
     "af":"Africâner","sq":"Albanês","am":"Amárico","ar":"Árabe","hy":"Armênio","az":"Azerbaijano",
     "eu":"Basco","be":"Bielorrusso","bn":"Bengali","bs":"Bósnio","bg":"Búlgaro","ca":"Catalão",
@@ -192,32 +189,7 @@ lang_code = dict(options)[language_label]
 
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
 
-st.markdown("""
-<style>
-[data-testid="stFileUploaderDropzone"] { position: relative; }
-[data-testid="stFileUploaderDropzone"] span,
-[data-testid="stFileUploaderDropzone"] p { visibility: hidden; }
-[data-testid="stFileUploaderDropzone"]::before {
-  content: "Arraste e solte o arquivo aqui";
-  visibility: visible;
-  position: absolute;
-  left: 56px;
-  top: 18px;
-  color: #fff;
-  font-weight: 600;
-}
-[data-testid="stFileUploaderDropzone"]::after {
-  content: "Limite de 200MB por arquivo • XLF, XLIFF";
-  visibility: visible;
-  position: absolute;
-  left: 56px;
-  top: 44px;
-  color: #bbb;
-  font-size: 0.9rem;
-}
-</style>
-""", unsafe_allow_html=True)
-
+# Tradução do texto do uploader sem sobreposição
 components.html("""
 <script>
 (function () {
