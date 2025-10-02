@@ -32,8 +32,8 @@ def show_logo():
         b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
         st.markdown(
             f"""
-            <div style="width:100%;display:flex;justify-content:center;margin-bottom:4px;">
-              <img src="data:image/png;base64,{b64}" style="max-width:360px;width:100%;height:auto;display:block;" />
+            <div style="width:100%;display:flex;justify-content:left;margin-bottom:4px;">
+              <img src="data:image/png;base64,{b64}" style="max-width:250px;width:100%;height:100px;display:block;" />
             </div>
             """,
             unsafe_allow_html=True,
