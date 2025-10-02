@@ -34,7 +34,7 @@ with col_logo:
         st.write("")  # silencioso se não achar
 with col_title:
     st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
-st.caption("Firjan SENAI · Dark mode · Tradução completa com preservação de tags")
+st.caption("Firjan SENAI · Tradução completa de cursos Articulate Rise em Português")
 
 def safe_str(x)->str:
     return "" if x is None else str(x)
