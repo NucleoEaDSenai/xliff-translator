@@ -225,6 +225,8 @@ def process(data: bytes, lang_code: str, prog, status):
     root = ET.fromstring(data, parser=parser)
     pairs = iter_source_target_pairs(root)
     total = max(len(pairs), 1)
+    status.text("0% concluído…")
+    prog.progress(0.0)
     for i, (src, tgt) in enumerate(pairs, start=1):
         translate_node_texts(src, lang_code)
         tgt = ensure_target_for_source(src, tgt)
@@ -235,12 +237,14 @@ def process(data: bytes, lang_code: str, prog, status):
         if len(src):
             tgt[-1].tail = safe_str(src[-1].tail)
         if i == 1 or i % 10 == 0 or i == total:
-            prog.progress(i / total)
-            status.write(f"Traduzindo segmentos… {i}/{total}")
+            frac = i / total
+            percent = int(round(frac * 100))
+            prog.progress(frac)
+            status.text(f"{percent}% concluído…")
     translate_all_notes(root, lang_code)
     translate_accessibility_attrs(root, lang_code)
     prog.progress(1.0)
-    status.write("Finalizando arquivo…")
+    status.text("100% concluído — finalizando arquivo…")
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
 
 if run:
