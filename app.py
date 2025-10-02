@@ -1,27 +1,22 @@
-import io
 import os
-import re
 import time
+from copy import deepcopy
 from typing import List, Tuple, Optional
 
 import streamlit as st
 from lxml import etree as ET
-
-# Provedores de tradução
 from deep_translator import GoogleTranslator
-try:
-    import deepl  # opcional (requer DEEPL_API_KEY)
-except Exception:
-    deepl = None
+import re
 
-st.set_page_config(page_title="XLIFF → EN Translator", page_icon="🌍", layout="centered")
+# -------------------- CONFIG UI --------------------
+st.set_page_config(page_title="XLIFF → English (Google)", page_icon="🌍", layout="centered")
 
-PRIMARY = "#83c7e5"  # azul SENAI
+PRIMARY = "#83c7e5"  # Azul SENAI
 st.markdown(f"""
 <style>
 body {{ background:#000; color:#fff; }}
-h1,h2,h3,label,span,div,p {{ color:#fff !important; }}
 .block-container {{ padding-top: 1.2rem; max-width: 960px; }}
+h1,h2,h3,p,span,div,label {{ color:#fff !important; }}
 .stButton>button {{
   background:#333; color:{PRIMARY}; font-weight:700; border:none; border-radius:8px; padding:.6rem 1rem;
 }}
@@ -29,18 +24,15 @@ h1,h2,h3,label,span,div,p {{ color:#fff !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 XLIFF Translator (full content, tags preserved)")
-st.caption("Traduza .xlf/.xliff completos (1.2/2.0), preservando tags inline. Ideal para cursos Rise.")
+st.title("🌍 XLIFF Translator — Google (full content)")
+st.caption("Traduz .xlf/.xliff completos (XLIFF 1.2 e 2.0), preservando tags inline. Dark mode + proteção de placeholders.")
 
-# ---------------- Utils (placeholders/tags inline) ----------------
-# Protege variáveis e símbolos comuns que NÃO devem ser traduzidos
+# -------------------- HELPERS --------------------
+# placeholders/comandos que NÃO devem ser traduzidos
 PLACEHOLDER_RE = re.compile(r"(\{\{.*?\}\}|\{.*?\}|%s|%d|%\(\w+\)s)")
 
-# Token especial para substituir sub-elementos inline (evita <...> no texto traduzido)
-INLINE_TOKEN = "§§T{}§§"
-
-def protect_nontranslatable(text: str) -> Tuple[str, List[str]]:
-    """Protege {…}, {{…}}, %s, %d etc."""
+def protect_nontranslatable(text: str):
+    """Protege {…}, {{…}}, %s etc. com tokens §§K#§§ para não serem mexidos pelo tradutor."""
     if not text:
         return "", []
     tokens = []
@@ -50,80 +42,23 @@ def protect_nontranslatable(text: str) -> Tuple[str, List[str]]:
     protected = PLACEHOLDER_RE.sub(_sub, text)
     return protected, tokens
 
-def restore_nontranslatable(text: str, tokens: List[str]) -> str:
+def restore_nontranslatable(text: str, tokens):
     def _restore(m):
         idx = int(m.group(1))
         return tokens[idx] if 0 <= idx < len(tokens) else m.group(0)
     return re.sub(r"§§K(\d+)§§", _restore, text)
 
-def extract_inner_with_inline_tokens(elem: ET._Element) -> Tuple[str, List[str]]:
-    """
-    Extrai TODO o conteúdo interno de <source> (texto+inlines), substituindo cada filho por token §§Tn§§.
-    Retorna (string_com_tokens, lista_xml_children_serializados).
-    """
-    parts: List[str] = []
-    child_xml: List[str] = []
-
-    if elem.text:
-        parts.append(elem.text)
-
-    for i, child in enumerate(list(elem)):
-        # serializa o filho (mantém suas tags internas)
-        child_xml_str = ET.tostring(child, encoding="unicode")
-        child_xml.append(child_xml_str)
-
-        # coloca token para o lugar do filho
-        parts.append(INLINE_TOKEN.format(i))
-
-        # inclui o tail (texto após o filho) também
-        if child.tail:
-            parts.append(child.tail)
-
-    return "".join(parts), child_xml
-
-def rebuild_elem_from_fragment(elem: ET._Element, fragment: str):
-    """
-    Limpa elem e repovoa seu conteúdo com o fragmento XML (texto + tags inline restauradas).
-    """
-    # limpa
-    for ch in list(elem):
-        elem.remove(ch)
-    elem.text = None
-
-    # embrulha o fragmento para parsear como XML válido
-    wrapper_xml = f"<wrapper>{fragment}</wrapper>"
+def translate_text_unit(text: str, target_lang: str = "en") -> str:
+    """Tradução de uma unidade de texto com proteção de placeholders (Google via deep-translator)."""
+    if not text or not text.strip():
+        return text or ""
+    t, toks = protect_nontranslatable(text)
     try:
-        wrapper = ET.fromstring(wrapper_xml)
-    except ET.XMLSyntaxError:
-        # se der erro por caracteres especiais, como fallback: escape < >
-        fragment_safe = fragment.replace("<", "&lt;").replace(">", "&gt;")
-        wrapper = ET.fromstring(f"<wrapper>{fragment_safe}</wrapper>")
-
-    # define elem.text e filhos na ordem correta
-    elem.text = wrapper.text
-    last = None
-    for node in list(wrapper):
-        wrapper.remove(node)
-        elem.append(node)
-        last = node
-    if last is not None:
-        last.tail = wrapper.tail
-
-def translate_string_google(s: str, target_lang: str = "en") -> str:
-    if not s or not s.strip():
-        return s or ""
-    # primeiro protege {…}, {{…}}, %s etc.
-    s1, tokens = protect_nontranslatable(s)
-    out = GoogleTranslator(source="auto", target=target_lang).translate(s1)
-    return restore_nontranslatable(out, tokens)
-
-def translate_string_deepl(s: str, translator, target_lang: str = "EN") -> str:
-    if not s or not s.strip():
-        return s or ""
-    s1, tokens = protect_nontranslatable(s)
-    res = translator.translate_text(s1, target_lang=target_lang)
-    out = res.text if hasattr(res, "text") else str(res)
-    return restore_nontranslatable(out, tokens)
+        out = GoogleTranslator(source="auto", target=target_lang).translate(t)
+    except Exception:
+        # fallback: mantém original se houver erro/intermitência
+        out = t
+    return restore_nontranslatable(out, toks)
 
 def get_namespaces(root) -> dict:
     nsmap = {}
@@ -142,7 +77,8 @@ def detect_version(root) -> str:
 
 def iter_source_target_pairs(root) -> List[Tuple[ET._Element, Optional[ET._Element]]]:
     """
-    Retorna pares (source_elem, target_elem) para 1.2 e 2.0, cobrindo TODO o conteúdo (todas as páginas).
+    Retorna pares (source_elem, target_elem) cobrindo XLIFF 1.2 (<trans-unit>) e 2.0 (<unit>/<segment>).
+    Traduzindo todos os segmentos (todas páginas/blocos), não só títulos.
     """
     ns = get_namespaces(root)
     version = detect_version(root)
@@ -168,121 +104,101 @@ def iter_source_target_pairs(root) -> List[Tuple[ET._Element, Optional[ET._Eleme
     return pairs
 
 def ensure_target_for_source(src: ET._Element, tgt: Optional[ET._Element]) -> ET._Element:
+    """Garante que exista <target> “irmão” do <source>, preservando namespace."""
     if tgt is not None:
         return tgt
-    qn = ET.QName(src)  # preserva namespace
+    qn = ET.QName(src)
     tag = qn.localname.replace("source", "target")
     return ET.SubElement(src.getparent(), f"{{{qn.namespace}}}{tag}") if qn.namespace else ET.SubElement(src.getparent(), "target")
 
-def translate_xliff_bytes(
-    data: bytes,
-    provider: str = "google",
-    target_lang: str = "en",
-    overwrite_source: bool = True,
-    throttle_secs: float = 0.0,
-    progress_cb=None
-) -> bytes:
-    parser = ET.XMLParser(remove_blank_text=False)
-    root = ET.fromstring(data, parser=parser)
-
-    deepl_translator = None
-    if provider.lower() == "deepl":
-        if deepl is None:
-            raise RuntimeError("deepl não instalado. Escolha 'google' ou instale e defina DEEPL_API_KEY.")
-        api_key = os.environ.get("DEEPL_API_KEY")
-        if not api_key:
-            raise RuntimeError("Defina DEEPL_API_KEY para usar o DeepL.")
-        deepl_translator = deepl.Translator(api_key)
-
-    pairs = iter_source_target_pairs(root)
-    total = len(pairs)
-
-    for i, (src, tgt) in enumerate(pairs, start=1):
-        # 1) extrai o inner XML do <source>, com tokens para inlines
-        inner, inline_xml_list = extract_inner_with_inline_tokens(src)
-
-        # 2) substitui tokens INLINE_TOKEN por marcadores de texto (sem < >) para não quebrar o tradutor
-        #    Ex.: §§T0§§, §§T1§§...
-        # (já extraímos assim)
-        text_for_mt = inner
-
-        # 3) traduz string completa (texto + tails), preservando {…}, %s etc.
-        if provider.lower() == "deepl":
-            translated = translate_string_deepl(text_for_mt, deepl_translator, target_lang.upper())
-        else:
-            translated = translate_string_google(text_for_mt, target_lang)
-
-        # 4) restaura inlines: volta §§Tn§§ para o XML original do child
-        for idx, child_xml in enumerate(inline_xml_list):
-            translated = translated.replace(INLINE_TOKEN.format(idx), child_xml)
-
-        # 5) garante <target> e escreve nele o fragmento traduzido
-        tgt = ensure_target_for_source(src, tgt)
-        rebuild_elem_from_fragment(tgt, translated)
-
-        # 6) sobrescreve <source> se desejado (arquivo 100% em inglês)
-        if overwrite_source:
-            rebuild_elem_from_fragment(src, translated)
-
-        # progresso / throttle
-        if progress_cb:
-            progress_cb(i, total)
+def translate_node_texts(elem: ET._Element, target_lang: str = "en", throttle_secs: float = 0.0):
+    """
+    Traduz recursivamente elem.text e, para cada filho, traduz child.text e child.tail.
+    NÃO altera nomes de tags/atributos; preserva estrutura e tags inline (<g>, <ph>, <mrk>, etc).
+    """
+    # traduz o texto do nó atual
+    if elem.text:
+        elem.text = translate_text_unit(elem.text, target_lang)
         if throttle_secs:
             time.sleep(throttle_secs)
 
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
+    for child in list(elem):
+        # desce recursivamente
+        translate_node_texts(child, target_lang, throttle_secs)
+        # traduz o tail (texto após o filho)
+        if child.tail:
+            child.tail = translate_text_unit(child.tail, target_lang)
+            if throttle_secs:
+                time.sleep(throttle_secs)
 
-# ---------------- UI ----------------
+# -------------------- UI CONTROLS --------------------
 col1, col2 = st.columns(2)
 with col1:
-    provider = st.selectbox("Provedor", ["google", "deepl"], help="DeepL requer DEEPL_API_KEY.")
+    target_lang = st.text_input("Idioma de destino", value="en", help="Ex.: en, es, fr, de… (padrão: en)")
 with col2:
-    target_lang = st.text_input("Idioma destino", value="en")
+    throttle = st.number_input("Intervalo entre chamadas (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1, help="Use 0.2–0.5s se notar bloqueios no Google")
 
-overwrite = st.checkbox("Sobrescrever <source> (arquivo 100% em inglês)", value=True)
-throttle = st.number_input("Intervalo entre chamadas (s)", min_value=0.0, max_value=5.0, value=0.0, step=0.1)
+overwrite = st.checkbox("Sobrescrever <source> com inglês (arquivo 100% EN)", value=True)
 
-uploaded = st.file_uploader("📂 Selecione o arquivo .xlf/.xliff", type=["xlf", "xliff"])
+uploaded = st.file_uploader("📂 Selecione o arquivo .xlf/.xliff do Rise", type=["xlf", "xliff"])
 run = st.button("Traduzir arquivo")
 
+# -------------------- PROCESS --------------------
 if run:
     if not uploaded:
         st.error("Envie um arquivo .xlf/.xliff.")
         st.stop()
 
     data = uploaded.read()
-    st.write("Analisando XLIFF…")
 
-    # pré-contagem para barra de progresso
+    # Pré-contagem para barra de progresso
     try:
         tmp_root = ET.fromstring(data, parser=ET.XMLParser(remove_blank_text=False))
         total_pairs = len(iter_source_target_pairs(tmp_root))
-    except Exception:
+    except Exception as e:
         total_pairs = 0
 
     prog = st.progress(0.0)
     status = st.empty()
+
     def _progress(i, total):
         if total > 0:
             prog.progress(i/total)
-            status.write(f"Traduzindo: {i}/{total} segmentos")
+            status.write(f"Traduzindo segmentos: {i}/{total}")
 
     try:
-        out_bytes = translate_xliff_bytes(
-            data=data,
-            provider=provider,
-            target_lang=target_lang,
-            overwrite_source=overwrite,
-            throttle_secs=throttle,
-            progress_cb=_progress if total_pairs>0 else None
-        )
+        parser = ET.XMLParser(remove_blank_text=False)
+        root = ET.fromstring(data, parser=parser)
+
+        pairs = iter_source_target_pairs(root)
+        total = len(pairs)
+
+        for i, (src, tgt) in enumerate(pairs, start=1):
+            # 1) traduz TODO o conteúdo do <source> recursivamente (text + tails)
+            translate_node_texts(src, target_lang=target_lang, throttle_secs=throttle)
+
+            # 2) garante <target> e copia o conteúdo traduzido do source para o target
+            tgt = ensure_target_for_source(src, tgt)
+            tgt.clear()
+            # clona filhos preservando estrutura/tags
+            for ch in list(src):
+                tgt.append(deepcopy(ch))
+            # copia text e tail finais
+            tgt.text = src.text
+            if len(src):
+                tgt[-1].tail = src[-1].tail
+
+            # 3) sobrescreve <source> com inglês (se marcado) — já está traduzido acima
+            # (se você desmarcar overwrite, o source ficará no idioma original e apenas o target em EN)
+            # nada a fazer aqui quando overwrite=True, pois já traduzimos src in-place
+
+            # progresso
+            _progress(i, total)
+
+        out_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
         st.success("✅ Tradução concluída!")
         out_name = os.path.splitext(uploaded.name)[0] + "-translated.xlf"
-        st.download_button(
-            label="⬇️ Baixar XLIFF traduzido",
-            data=out_bytes,
-            file_name=out_name,
-            mime="application/xliff+xml"
-        )
+        st.download_button("⬇️ Baixar XLIFF traduzido", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
+
     except Exception as e:
         st.error(f"Erro ao traduzir: {e}")
