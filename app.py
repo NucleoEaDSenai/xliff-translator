@@ -1,9 +1,11 @@
-import os, io, time, re
+import os, time, re
 from copy import deepcopy
 from typing import List, Tuple, Optional
+
 import streamlit as st
 from lxml import etree as ET
 from deep_translator import GoogleTranslator
+from pathlib import Path
 
 st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="centered")
 
@@ -19,17 +21,18 @@ hr {{ border: 0; border-top: 1px solid #222; margin: 24px 0; }}
 .footer {{ text-align:center; color:#aaa; font-size:12px; margin-top:32px; }}
 .header {{ display:flex; align-items:center; gap:16px; margin-bottom:8px; }}
 .logo img {{ display:block; }}
-.selectbox-label span {{ color:#bbb !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-c1, c2 = st.columns([1,6])
-with c1:
-    try:
-        st.image("firjan_senai_branco_horizontal.png", use_container_width=True)
-    except:
-        st.write("")
-with c2:
+# ---------- Logo (caminho relativo ao app) ----------
+logo_path = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
+col_logo, col_title = st.columns([1, 6])
+with col_logo:
+    if logo_path.exists():
+        st.image(str(logo_path), width=220)
+    else:
+        st.write("")  # silencioso se não achar
+with col_title:
     st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
 st.caption("Firjan SENAI · Dark mode · Tradução completa com preservação de tags")
 
@@ -135,10 +138,75 @@ def translate_accessibility_attrs(root:ET._Element, lang:str, throttle:float):
                     el.attrib[k]=translate_text_unit(val, lang)
                     if throttle: time.sleep(throttle)
 
-lang_map={"Inglês":"en","Português":"pt","Francês":"fr"}
-lang_label = st.selectbox("Idioma de destino", list(lang_map.keys()))
-lang_code = lang_map[lang_label]
-throttle = st.number_input("Intervalo entre chamadas (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1)
+# ---------- Idiomas dinâmicos (com nome PT para os mais comuns) ----------
+pt_overrides = {
+    "en": "Inglês",
+    "pt": "Português",
+    "es": "Espanhol",
+    "fr": "Francês",
+    "de": "Alemão",
+    "it": "Italiano",
+    "nl": "Holandês",
+    "sv": "Sueco",
+    "no": "Norueguês",
+    "da": "Dinamarquês",
+    "fi": "Finlandês",
+    "pl": "Polonês",
+    "cs": "Tcheco",
+    "sk": "Eslovaco",
+    "sl": "Esloveno",
+    "hu": "Húngaro",
+    "ro": "Romeno",
+    "bg": "Búlgaro",
+    "el": "Grego",
+    "tr": "Turco",
+    "ru": "Russo",
+    "uk": "Ucraniano",
+    "ar": "Árabe",
+    "he": "Hebraico",
+    "hi": "Hindi",
+    "bn": "Bengali",
+    "th": "Tailandês",
+    "vi": "Vietnamita",
+    "id": "Indonésio",
+    "ms": "Malaio",
+    "zh-CN": "Chinês (Simplificado)",
+    "zh-TW": "Chinês (Tradicional)",
+    "ja": "Japonês",
+    "ko": "Coreano",
+    "fa": "Persa (Farsi)",
+    "ur": "Urdu",
+    "sw": "Suaíli",
+    "tl": "Filipino",
+    "lv": "Letão",
+    "lt": "Lituano",
+    "et": "Estoniano",
+    "is": "Islandês",
+    "ga": "Irlandês (Gaélico)",
+    "mt": "Maltês",
+    "af": "Africâner",
+}
+
+try:
+    supported = GoogleTranslator().get_supported_languages(as_dict=True)  # {'en':'english', ...}
+except Exception:
+    supported = {"en":"english","pt":"portuguese","es":"spanish","fr":"french","de":"german"}
+
+labels_codes = []
+for code, name in supported.items():
+    name_pt = pt_overrides.get(code, name.capitalize())
+    labels_codes.append((name_pt, code))
+
+labels_codes.sort(key=lambda x: x[0])
+label_default = next((lbl for lbl, c in labels_codes if c == "en"), labels_codes[0][0])
+
+col_lang, col_throttle = st.columns([2,1])
+with col_lang:
+    language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in labels_codes], index=[lbl for lbl,_ in labels_codes].index(label_default))
+lang_code = dict(labels_codes)[language_label]
+with col_throttle:
+    throttle = st.number_input("Intervalo (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1)
+
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
 run = st.button("Traduzir arquivo")
 
@@ -146,6 +214,7 @@ if run:
     if not uploaded:
         st.error("Envie um arquivo .xlf/.xliff.")
         st.stop()
+
     data = uploaded.read()
     try:
         tmp_root = ET.fromstring(data, parser=ET.XMLParser(remove_blank_text=False))
@@ -153,13 +222,16 @@ if run:
         st.write(f"Segmentos detectados: **{total_pairs}**")
     except:
         total_pairs = 0
+
     prog = st.progress(0.0); status = st.empty()
     def _p(i,t,phase="segments"):
         pct = min(max(i/ t,0),1) if t>0 else 0.0
         prog.progress(pct); status.write(f"{'Traduzindo' if phase=='segments' else phase}: {i}/{t}" if t else f"{phase}…")
+
     try:
         parser = ET.XMLParser(remove_blank_text=False)
         root = ET.fromstring(data, parser=parser)
+
         pairs = iter_source_target_pairs(root); total=len(pairs)
         for i,(src,tgt) in enumerate(pairs, start=1):
             translate_node_texts(src, lang_code, throttle)
@@ -169,9 +241,11 @@ if run:
             tgt.text = safe_str(src.text)
             if len(src): tgt[-1].tail = safe_str(src[-1].tail)
             _p(i,total,"segments")
+
         notes = root.findall(".//{*}note"); tn=len(notes)
         for j,n in enumerate(notes, start=1):
             translate_node_texts(n, lang_code, throttle); _p(j, tn if tn else 1, "notes")
+
         attr_nodes=[]; ATTRS=("title","alt","aria-label")
         for el in root.iter():
             if any(a in el.attrib for a in ATTRS): attr_nodes.append(el)
@@ -184,11 +258,13 @@ if run:
                         el.attrib[a]=translate_text_unit(v, lang_code)
                         if throttle: time.sleep(throttle)
             _p(k, ta if ta else 1, "attributes")
+
         out_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
         st.success("Tradução concluída!")
         base = os.path.splitext(uploaded.name)[0]
         out_name = f"{base}-{lang_code}.xlf"
         st.download_button("Baixar XLIFF traduzido", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
+
     except Exception as e:
         st.error(f"Erro ao traduzir: {e}")
 
