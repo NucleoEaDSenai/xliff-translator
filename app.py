@@ -40,8 +40,8 @@ def show_logo():
         )
 
 show_logo()
-st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor XLIFF</h1>", unsafe_allow_html=True)
-st.caption("Firjan SENAI · Dark mode · Tradução completa com preservação de tags")
+st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor de Cursos - Articulate Rise</h1>", unsafe_allow_html=True)
+st.caption("Firjan SENAI · Tradução completa de cursos do Português para outras línguas")
 
 # ---------- Utilidades ----------
 def safe_str(x)->str:
