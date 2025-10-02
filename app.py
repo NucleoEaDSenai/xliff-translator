@@ -25,40 +25,58 @@ h1,h2,h3,p,span,div,label {{ color:#fff !important; }}
 """, unsafe_allow_html=True)
 
 st.title("🌍 XLIFF Translator — Google (full content)")
-st.caption("Traduz .xlf/.xliff completos (XLIFF 1.2 e 2.0), preservando tags inline. Dark mode + proteção de placeholders.")
+st.caption("Traduz .xlf/.xliff completos (1.2/2.0), preservando tags inline. Sobrescreve source/target, traduz <note> e atributos title/alt/aria-label.")
 
-# -------------------- HELPERS --------------------
+# -------------------- HELPERS ROBUSTOS --------------------
+def safe_str(x) -> str:
+    """Garante string (evita None)."""
+    return "" if x is None else str(x)
+
 # placeholders/comandos que NÃO devem ser traduzidos
 PLACEHOLDER_RE = re.compile(r"(\{\{.*?\}\}|\{.*?\}|%s|%d|%\(\w+\)s)")
 
 def protect_nontranslatable(text: str):
     """Protege {…}, {{…}}, %s etc. com tokens §§K#§§ para não serem mexidos pelo tradutor."""
+    text = safe_str(text)
     if not text:
         return "", []
     tokens = []
     def _sub(m):
         tokens.append(m.group(0))
         return f"§§K{len(tokens)-1}§§"
-    protected = PLACEHOLDER_RE.sub(_sub, text)
+    try:
+        protected = PLACEHOLDER_RE.sub(_sub, text)
+    except Exception:
+        protected = text
     return protected, tokens
 
 def restore_nontranslatable(text: str, tokens):
-    def _restore(m):
-        idx = int(m.group(1))
-        return tokens[idx] if 0 <= idx < len(tokens) else m.group(0)
-    return re.sub(r"§§K(\d+)§§", _restore, text)
+    text = safe_str(text)
+    if not tokens:
+        return text
+    try:
+        def _restore(m):
+            idx = int(m.group(1))
+            return tokens[idx] if 0 <= idx < len(tokens) else m.group(0)
+        return re.sub(r"§§K(\d+)§§", _restore, text)
+    except Exception:
+        return text
 
 def translate_text_unit(text: str, target_lang: str = "en") -> str:
     """Tradução de uma unidade de texto com proteção de placeholders (Google via deep-translator)."""
-    if not text or not text.strip():
-        return text or ""
+    text = safe_str(text)
+    if not text.strip():
+        return text
     t, toks = protect_nontranslatable(text)
+    out = t
     try:
-        out = GoogleTranslator(source="auto", target=target_lang).translate(t)
+        tr = GoogleTranslator(source="auto", target=target_lang).translate(t)
+        out = safe_str(tr)
     except Exception:
-        # fallback: mantém original se houver erro/intermitência
+        # fallback mantém t
         out = t
-    return restore_nontranslatable(out, toks)
+    out = restore_nontranslatable(out, toks)
+    return safe_str(out)
 
 def get_namespaces(root) -> dict:
     nsmap = {}
@@ -70,8 +88,8 @@ def get_namespaces(root) -> dict:
     return nsmap
 
 def detect_version(root) -> str:
-    default_ns = root.nsmap.get(None, "")
-    if "urn:oasis:names:tc:xliff:document:2.0" in default_ns or root.get("version","") == "2.0":
+    default_ns = root.nsmap.get(None, "") or ""
+    if "urn:oasis:names:tc:xliff:document:2.0" in default_ns or (root.get("version","") == "2.0"):
         return "2.0"
     return "1.2"
 
@@ -115,21 +133,46 @@ def translate_node_texts(elem: ET._Element, target_lang: str = "en", throttle_se
     """
     Traduz recursivamente elem.text e, para cada filho, traduz child.text e child.tail.
     NÃO altera nomes de tags/atributos; preserva estrutura e tags inline (<g>, <ph>, <mrk>, etc).
+    À prova de None.
     """
-    # traduz o texto do nó atual
-    if elem.text:
-        elem.text = translate_text_unit(elem.text, target_lang)
-        if throttle_secs:
-            time.sleep(throttle_secs)
-
-    for child in list(elem):
-        # desce recursivamente
-        translate_node_texts(child, target_lang, throttle_secs)
-        # traduz o tail (texto após o filho)
-        if child.tail:
-            child.tail = translate_text_unit(child.tail, target_lang)
+    try:
+        if elem.text is not None and safe_str(elem.text).strip():
+            elem.text = translate_text_unit(elem.text, target_lang)
             if throttle_secs:
                 time.sleep(throttle_secs)
+    except Exception:
+        elem.text = safe_str(elem.text)
+
+    for child in list(elem):
+        translate_node_texts(child, target_lang, throttle_secs)
+        try:
+            if child.tail is not None and safe_str(child.tail).strip():
+                child.tail = translate_text_unit(child.tail, target_lang)
+                if throttle_secs:
+                    time.sleep(throttle_secs)
+        except Exception:
+            child.tail = safe_str(child.tail)
+
+def translate_all_notes(root: ET._Element, target_lang: str = "en", throttle_secs: float = 0.0):
+    """Traduz todo conteúdo de <note> (texto + tails) em qualquer nível."""
+    notes = root.findall(".//{*}note")
+    for i, note in enumerate(notes, start=1):
+        translate_node_texts(note, target_lang, throttle_secs)
+
+def translate_accessibility_attrs(root: ET._Element, target_lang: str = "en", throttle_secs: float = 0.0):
+    """
+    Traduz apenas atributos 'falantes' de acessibilidade/UX (title, alt, aria-label).
+    Não toca em IDs, refs, estados e metadados técnicos.
+    """
+    ATTRS = ("title", "alt", "aria-label")
+    for el in root.iter():
+        for key in ATTRS:
+            if key in el.attrib:
+                val = safe_str(el.attrib.get(key))
+                if val.strip():
+                    el.attrib[key] = translate_text_unit(val, target_lang)
+                    if throttle_secs:
+                        time.sleep(throttle_secs)
 
 # -------------------- UI CONTROLS --------------------
 col1, col2 = st.columns(2)
@@ -137,8 +180,6 @@ with col1:
     target_lang = st.text_input("Idioma de destino", value="en", help="Ex.: en, es, fr, de… (padrão: en)")
 with col2:
     throttle = st.number_input("Intervalo entre chamadas (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1, help="Use 0.2–0.5s se notar bloqueios no Google")
-
-overwrite = st.checkbox("Sobrescrever <source> com inglês (arquivo 100% EN)", value=True)
 
 uploaded = st.file_uploader("📂 Selecione o arquivo .xlf/.xliff do Rise", type=["xlf", "xliff"])
 run = st.button("Traduzir arquivo")
@@ -151,49 +192,73 @@ if run:
 
     data = uploaded.read()
 
-    # Pré-contagem para barra de progresso
+    # Pré-contagem para barra de progresso (segmentos)
     try:
         tmp_root = ET.fromstring(data, parser=ET.XMLParser(remove_blank_text=False))
         total_pairs = len(iter_source_target_pairs(tmp_root))
-    except Exception as e:
+    except Exception:
         total_pairs = 0
 
     prog = st.progress(0.0)
     status = st.empty()
 
-    def _progress(i, total):
+    def _progress(i, total, phase="segments"):
         if total > 0:
-            prog.progress(i/total)
-            status.write(f"Traduzindo segmentos: {i}/{total}")
+            pct = min(max(i/total, 0), 1)
+        else:
+            pct = 0.0
+        prog.progress(pct)
+        label = "Traduzindo segmentos" if phase == "segments" else phase
+        status.write(f"{label}: {i}/{total}" if total else f"{label}…")
 
     try:
         parser = ET.XMLParser(remove_blank_text=False)
         root = ET.fromstring(data, parser=parser)
 
+        # 1) SEGMENTOS (source/target) — traduz TUDO e sobrescreve source & target
         pairs = iter_source_target_pairs(root)
         total = len(pairs)
 
         for i, (src, tgt) in enumerate(pairs, start=1):
-            # 1) traduz TODO o conteúdo do <source> recursivamente (text + tails)
+            # traduz TODO o conteúdo do <source> recursivamente (text + tails)
             translate_node_texts(src, target_lang=target_lang, throttle_secs=throttle)
 
-            # 2) garante <target> e copia o conteúdo traduzido do source para o target
+            # garante <target> e copia o conteúdo traduzido do source para o target
             tgt = ensure_target_for_source(src, tgt)
             tgt.clear()
-            # clona filhos preservando estrutura/tags
             for ch in list(src):
                 tgt.append(deepcopy(ch))
-            # copia text e tail finais
-            tgt.text = src.text
+            tgt.text = safe_str(src.text)
             if len(src):
-                tgt[-1].tail = src[-1].tail
+                tgt[-1].tail = safe_str(src[-1].tail)
 
-            # 3) sobrescreve <source> com inglês (se marcado) — já está traduzido acima
-            # (se você desmarcar overwrite, o source ficará no idioma original e apenas o target em EN)
-            # nada a fazer aqui quando overwrite=True, pois já traduzimos src in-place
+            _progress(i, total, "segments")
 
-            # progresso
-            _progress(i, total)
+        # 2) NOTAS
+        notes = root.findall(".//{*}note")
+        total_notes = len(notes)
+        for j, note in enumerate(notes, start=1):
+            translate_node_texts(note, target_lang=target_lang, throttle_secs=throttle)
+            _progress(j, total_notes if total_notes else 1, "notes")
+
+        # 3) ATRIBUTOS (title/alt/aria-label)
+        # Contagem para progresso
+        all_attr_nodes = []
+        ATTRS = ("title", "alt", "aria-label")
+        for el in root.iter():
+            if any(k in el.attrib for k in ATTRS):
+                all_attr_nodes.append(el)
+        total_attrs = len(all_attr_nodes)
+
+        for k, el in enumerate(all_attr_nodes, start=1):
+            for key in ATTRS:
+                if key in el.attrib:
+                    val = safe_str(el.attrib.get(key))
+                    if val.strip():
+                        el.attrib[key] = translate_text_unit(val, target_lang)
+                        if throttle:
+                            time.sleep(throttle)
+            _progress(k, total_attrs if total_attrs else 1, "attributes")
 
         out_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
         st.success("✅ Tradução concluída!")
