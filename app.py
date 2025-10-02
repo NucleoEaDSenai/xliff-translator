@@ -1,11 +1,11 @@
-import os, time, re
+import os, time, re, base64
 from copy import deepcopy
 from typing import List, Tuple, Optional
+from pathlib import Path
 
 import streamlit as st
 from lxml import etree as ET
 from deep_translator import GoogleTranslator
-from pathlib import Path
 
 st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="centered")
 
@@ -13,28 +13,36 @@ PRIMARY = "#83c7e5"
 st.markdown(f"""
 <style>
 body {{ background:#000; color:#fff; }}
-.block-container {{ padding-top: 1.2rem; max-width: 1040px; }}
+.block-container {{ padding-top: 1.2rem; max-width: 1080px; }}
 h1,h2,h3,p,span,div,label,small {{ color:#fff !important; }}
 .stButton>button {{ background:#333; color:{PRIMARY}; font-weight:700; border:none; border-radius:8px; padding:.6rem 1rem; }}
 .stProgress > div > div > div > div {{ background-color: {PRIMARY}; }}
 hr {{ border: 0; border-top: 1px solid #222; margin: 24px 0; }}
 .footer {{ text-align:center; color:#aaa; font-size:12px; margin-top:32px; }}
 .header {{ display:flex; align-items:center; gap:16px; margin-bottom:8px; }}
-.logo img {{ display:block; }}
+.logo {{ display:flex; align-items:center; }}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Logo (caminho relativo ao app) ----------
-logo_path = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
-col_logo, col_title = st.columns([1, 6])
-with col_logo:
-    if logo_path.exists():
-        st.image(str(logo_path), width=220)
-    else:
-        st.write("")  # silencioso se não achar
-with col_title:
-    st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
-st.caption("Firjan SENAI · Tradução completa de cursos Articulate Rise em Português")
+def _load_logo_bytes():
+    candidates = [
+        Path(__file__).parent / "firjan_senai_branco_horizontal.png",
+        Path.cwd() / "firjan_senai_branco_horizontal.png",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p.read_bytes()
+    return None
+
+with st.container():
+    cols = st.columns([1.4, 6])
+    with cols[0]:
+        logo_bytes = _load_logo_bytes()
+        if logo_bytes:
+            st.image(logo_bytes, width=280)  # maior e fixo
+    with cols[1]:
+        st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
+st.caption("Firjan SENAI · Dark mode · Tradução completa com preservação de tags")
 
 def safe_str(x)->str:
     return "" if x is None else str(x)
@@ -138,83 +146,72 @@ def translate_accessibility_attrs(root:ET._Element, lang:str, throttle:float):
                     el.attrib[k]=translate_text_unit(val, lang)
                     if throttle: time.sleep(throttle)
 
-# ---------- Idiomas dinâmicos (com nome PT para os mais comuns) ----------
-pt_overrides = {
-    "en": "Inglês",
-    "pt": "Português",
-    "es": "Espanhol",
-    "fr": "Francês",
-    "de": "Alemão",
-    "it": "Italiano",
-    "nl": "Holandês",
-    "sv": "Sueco",
-    "no": "Norueguês",
-    "da": "Dinamarquês",
-    "fi": "Finlandês",
-    "pl": "Polonês",
-    "cs": "Tcheco",
-    "sk": "Eslovaco",
-    "sl": "Esloveno",
-    "hu": "Húngaro",
-    "ro": "Romeno",
-    "bg": "Búlgaro",
-    "el": "Grego",
-    "tr": "Turco",
-    "ru": "Russo",
-    "uk": "Ucraniano",
-    "ar": "Árabe",
-    "he": "Hebraico",
-    "hi": "Hindi",
-    "bn": "Bengali",
-    "th": "Tailandês",
-    "vi": "Vietnamita",
-    "id": "Indonésio",
-    "ms": "Malaio",
-    "zh-CN": "Chinês (Simplificado)",
-    "zh-TW": "Chinês (Tradicional)",
-    "ja": "Japonês",
-    "ko": "Coreano",
-    "fa": "Persa (Farsi)",
-    "ur": "Urdu",
-    "sw": "Suaíli",
-    "tl": "Filipino",
-    "lv": "Letão",
-    "lt": "Lituano",
-    "et": "Estoniano",
-    "is": "Islandês",
-    "ga": "Irlandês (Gaélico)",
-    "mt": "Maltês",
-    "af": "Africâner",
+# ---------- Idiomas por extenso em PT ----------
+pt_names = {
+    "af":"Africâner","sq":"Albanês","am":"Amárico","ar":"Árabe","hy":"Armênio","az":"Azerbaijano",
+    "eu":"Basco","be":"Bielorrusso","bn":"Bengali","bs":"Bósnio","bg":"Búlgaro","ca":"Catalão",
+    "ceb":"Cebuano","ny":"Chichewa","zh-CN":"Chinês (Simplificado)","zh-TW":"Chinês (Tradicional)",
+    "co":"Corso","hr":"Croata","cs":"Tcheco","da":"Dinamarquês","nl":"Holandês","en":"Inglês",
+    "eo":"Esperanto","et":"Estoniano","fi":"Finlandês","fr":"Francês","fy":"Frísio","gl":"Galego",
+    "ka":"Georgiano","de":"Alemão","el":"Grego","gu":"Guzerate","ht":"Crioulo haitiano",
+    "ha":"Hauçá","haw":"Havaiano","he":"Hebraico","hi":"Hindi","hmn":"Hmong","hu":"Húngaro",
+    "is":"Islandês","ig":"Igbo","id":"Indonésio","ga":"Irlandês (Gaélico)","it":"Italiano","ja":"Japonês",
+    "jw":"Javanês","kn":"Canarim","kk":"Cazaque","km":"Khmer","ko":"Coreano","ku":"Curdo",
+    "ky":"Quirguiz","lo":"Lao","la":"Latim","lv":"Letão","lt":"Lituano","lb":"Luxemburguês",
+    "mk":"Macedônio","mg":"Malgaxe","ms":"Malaio","ml":"Malaiala","mt":"Maltês","mi":"Maori",
+    "mr":"Marati","mn":"Mongol","my":"Myanmar (Birmanês)","ne":"Nepalês","no":"Norueguês",
+    "or":"Oriá","ps":"Pachto","fa":"Persa (Farsi)","pl":"Polonês","pt":"Português",
+    "pa":"Punjabi","ro":"Romeno","ru":"Russo","sm":"Samoano","gd":"Gaélico escocês","sr":"Sérvio",
+    "st":"Sesoto","sn":"Shona","sd":"Sindi","si":"Sinhala","sk":"Eslovaco","sl":"Esloveno",
+    "so":"Somali","es":"Espanhol","su":"Sundanês","sw":"Suaíli","sv":"Sueco","tl":"Filipino",
+    "tg":"Tadjique","ta":"Tâmil","te":"Télugo","th":"Tailandês","tr":"Turco","uk":"Ucraniano",
+    "ur":"Urdu","uz":"Uzbeque","vi":"Vietnamita","cy":"Galês","xh":"Xhosa","yi":"Iídiche",
+    "yo":"Iorubá","zu":"Zulu","ka":"Georgiano","kk":"Cazaque","uz":"Uzbeque"
 }
 
 try:
-    supported = GoogleTranslator().get_supported_languages(as_dict=True)  # {'en':'english', ...}
+    supported = GoogleTranslator().get_supported_languages(as_dict=True)  # {'en': 'english', ...}
 except Exception:
-    supported = {"en":"english","pt":"portuguese","es":"spanish","fr":"french","de":"german"}
+    supported = {"en":"english","pt":"portuguese","es":"spanish","fr":"french","de":"german","it":"italian","ja":"japanese","zh-CN":"chinese (simplified)","zh-TW":"chinese (traditional)","ko":"korean"}
 
 labels_codes = []
 for code, name in supported.items():
-    name_pt = pt_overrides.get(code, name.capitalize())
-    labels_codes.append((name_pt, code))
+    label = pt_names.get(code, name.capitalize())
+    labels_codes.append((label, code))
 
 labels_codes.sort(key=lambda x: x[0])
-label_default = next((lbl for lbl, c in labels_codes if c == "en"), labels_codes[0][0])
+default_label = next((lbl for lbl, c in labels_codes if c == "en"), labels_codes[0][0])
 
-col_lang, col_throttle = st.columns([2,1])
-with col_lang:
-    language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in labels_codes], index=[lbl for lbl,_ in labels_codes].index(label_default))
+c_lang, c_thr = st.columns([2,1])
+with c_lang:
+    language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in labels_codes],
+                                  index=[lbl for lbl,_ in labels_codes].index(default_label))
 lang_code = dict(labels_codes)[language_label]
-with col_throttle:
+with c_thr:
     throttle = st.number_input("Intervalo (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1)
 
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
 run = st.button("Traduzir arquivo")
 
+def process(data: bytes, lang_code: str, throttle: float):
+    parser = ET.XMLParser(remove_blank_text=False)
+    root = ET.fromstring(data, parser=parser)
+    pairs = iter_source_target_pairs(root)
+    for i,(src,tgt) in enumerate(pairs, start=1):
+        translate_node_texts(src, lang_code, throttle)
+        tgt = ensure_target_for_source(src, tgt)
+        tgt.clear()
+        for ch in list(src): tgt.append(deepcopy(ch))
+        tgt.text = safe_str(src.text)
+        if len(src): tgt[-1].tail = safe_str(src[-1].tail)
+    translate_all_notes(root, lang_code, throttle)
+    translate_accessibility_attrs(root, lang_code, throttle)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
+
 if run:
     if not uploaded:
         st.error("Envie um arquivo .xlf/.xliff.")
         st.stop()
-
     data = uploaded.read()
     try:
         tmp_root = ET.fromstring(data, parser=ET.XMLParser(remove_blank_text=False))
@@ -222,49 +219,14 @@ if run:
         st.write(f"Segmentos detectados: **{total_pairs}**")
     except:
         total_pairs = 0
-
     prog = st.progress(0.0); status = st.empty()
-    def _p(i,t,phase="segments"):
-        pct = min(max(i/ t,0),1) if t>0 else 0.0
-        prog.progress(pct); status.write(f"{'Traduzindo' if phase=='segments' else phase}: {i}/{t}" if t else f"{phase}…")
-
     try:
-        parser = ET.XMLParser(remove_blank_text=False)
-        root = ET.fromstring(data, parser=parser)
-
-        pairs = iter_source_target_pairs(root); total=len(pairs)
-        for i,(src,tgt) in enumerate(pairs, start=1):
-            translate_node_texts(src, lang_code, throttle)
-            tgt = ensure_target_for_source(src, tgt)
-            tgt.clear()
-            for ch in list(src): tgt.append(deepcopy(ch))
-            tgt.text = safe_str(src.text)
-            if len(src): tgt[-1].tail = safe_str(src[-1].tail)
-            _p(i,total,"segments")
-
-        notes = root.findall(".//{*}note"); tn=len(notes)
-        for j,n in enumerate(notes, start=1):
-            translate_node_texts(n, lang_code, throttle); _p(j, tn if tn else 1, "notes")
-
-        attr_nodes=[]; ATTRS=("title","alt","aria-label")
-        for el in root.iter():
-            if any(a in el.attrib for a in ATTRS): attr_nodes.append(el)
-        ta=len(attr_nodes)
-        for k,el in enumerate(attr_nodes, start=1):
-            for a in ATTRS:
-                if a in el.attrib:
-                    v=safe_str(el.attrib.get(a))
-                    if v.strip():
-                        el.attrib[a]=translate_text_unit(v, lang_code)
-                        if throttle: time.sleep(throttle)
-            _p(k, ta if ta else 1, "attributes")
-
-        out_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
+        out_bytes = process(data, lang_code, throttle)
+        prog.progress(1.0)
         st.success("Tradução concluída!")
         base = os.path.splitext(uploaded.name)[0]
         out_name = f"{base}-{lang_code}.xlf"
         st.download_button("Baixar XLIFF traduzido", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
-
     except Exception as e:
         st.error(f"Erro ao traduzir: {e}")
 
