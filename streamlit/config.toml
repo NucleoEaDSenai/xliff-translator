@@ -1,0 +1,6 @@
+[theme]
+base = "dark"          # força dark mode (use "auto" p/ seguir o tema do sistema)
+primaryColor = "#83c7e5"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#111111"
+textColor = "#FFFFFF"
