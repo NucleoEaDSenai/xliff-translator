@@ -189,7 +189,7 @@ options.sort(key=lambda x: x[0])
 language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in options])
 lang_code = dict(options)[language_label]
 
-uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
+uploaded = st.file_uploader("Selecione o arquivo com extensão .xlf/.xliff", type=["xlf","xliff"])
 run = st.button("Traduzir arquivo")
 
 def process(data: bytes, lang_code: str):
