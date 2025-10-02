@@ -39,7 +39,7 @@ with st.container():
     with cols[0]:
         logo_bytes = _load_logo_bytes()
         if logo_bytes:
-            st.image(logo_bytes, width=280)  # maior e fixo
+            st.image(logo_bytes, width=400)  # maior e fixo
     with cols[1]:
         st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
 st.caption("Firjan SENAI · Dark mode · Tradução completa com preservação de tags")
