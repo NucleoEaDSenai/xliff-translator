@@ -1,4 +1,4 @@
-import os, time, re, base64
+import os, time, re
 from copy import deepcopy
 from typing import List, Tuple, Optional
 from pathlib import Path
@@ -7,41 +7,33 @@ import streamlit as st
 from lxml import etree as ET
 from deep_translator import GoogleTranslator
 
-st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="centered")
+st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="wide")
 
 PRIMARY = "#83c7e5"
 st.markdown(f"""
 <style>
 body {{ background:#000; color:#fff; }}
-.block-container {{ padding-top: 1.2rem; max-width: 1080px; }}
+.block-container {{ padding-top: 1.2rem; max-width: 1280px; }}
 h1,h2,h3,p,span,div,label,small {{ color:#fff !important; }}
 .stButton>button {{ background:#333; color:{PRIMARY}; font-weight:700; border:none; border-radius:8px; padding:.6rem 1rem; }}
 .stProgress > div > div > div > div {{ background-color: {PRIMARY}; }}
 hr {{ border: 0; border-top: 1px solid #222; margin: 24px 0; }}
 .footer {{ text-align:center; color:#aaa; font-size:12px; margin-top:32px; }}
 .header {{ display:flex; align-items:center; gap:16px; margin-bottom:8px; }}
-.logo {{ display:flex; align-items:center; }}
+/* Selectbox amplo e sem corte de texto */
+.stSelectbox > div {{ width: 100% !important; }}
+div[data-baseweb="select"] {{ min-width: 640px !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-def _load_logo_bytes():
-    candidates = [
-        Path(__file__).parent / "firjan_senai_branco_horizontal.png",
-        Path.cwd() / "firjan_senai_branco_horizontal.png",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p.read_bytes()
-    return None
-
-with st.container():
-    cols = st.columns([1.4, 6])
-    with cols[0]:
-        logo_bytes = _load_logo_bytes()
-        if logo_bytes:
-            st.image(logo_bytes, width=500)  # maior e fixo
-    with cols[1]:
-        st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
+# ---------- Logo ----------
+logo_path = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
+c1, c2 = st.columns([1.2, 6])
+with c1:
+    if logo_path.exists():
+        st.image(str(logo_path), width=300)
+with c2:
+    st.markdown("<div class='header'><h1>Tradutor XLIFF</h1></div>", unsafe_allow_html=True)
 st.caption("Firjan SENAI · Dark mode · Tradução completa com preservação de tags")
 
 def safe_str(x)->str:
@@ -146,7 +138,7 @@ def translate_accessibility_attrs(root:ET._Element, lang:str, throttle:float):
                     el.attrib[k]=translate_text_unit(val, lang)
                     if throttle: time.sleep(throttle)
 
-# ---------- Idiomas por extenso em PT ----------
+# ---------- Lista com nomes por extenso (PT) ----------
 pt_names = {
     "af":"Africâner","sq":"Albanês","am":"Amárico","ar":"Árabe","hy":"Armênio","az":"Azerbaijano",
     "eu":"Basco","be":"Bielorrusso","bn":"Bengali","bs":"Bósnio","bg":"Búlgaro","ca":"Catalão",
@@ -166,27 +158,27 @@ pt_names = {
     "so":"Somali","es":"Espanhol","su":"Sundanês","sw":"Suaíli","sv":"Sueco","tl":"Filipino",
     "tg":"Tadjique","ta":"Tâmil","te":"Télugo","th":"Tailandês","tr":"Turco","uk":"Ucraniano",
     "ur":"Urdu","uz":"Uzbeque","vi":"Vietnamita","cy":"Galês","xh":"Xhosa","yi":"Iídiche",
-    "yo":"Iorubá","zu":"Zulu","ka":"Georgiano","kk":"Cazaque","uz":"Uzbeque"
+    "yo":"Iorubá","zu":"Zulu","mt":"Maltês"
 }
 
+# Gera lista a partir dos suportados do Google, mas mostrando o nome PT completo quando houver
 try:
     supported = GoogleTranslator().get_supported_languages(as_dict=True)  # {'en': 'english', ...}
 except Exception:
     supported = {"en":"english","pt":"portuguese","es":"spanish","fr":"french","de":"german","it":"italian","ja":"japanese","zh-CN":"chinese (simplified)","zh-TW":"chinese (traditional)","ko":"korean"}
 
-labels_codes = []
-for code, name in supported.items():
-    label = pt_names.get(code, name.capitalize())
-    labels_codes.append((label, code))
+options = []
+for code, engname in supported.items():
+    label = pt_names.get(code, engname.capitalize())
+    options.append((label, code))
 
-labels_codes.sort(key=lambda x: x[0])
-default_label = next((lbl for lbl, c in labels_codes if c == "en"), labels_codes[0][0])
+options.sort(key=lambda x: x[0])
 
-c_lang, c_thr = st.columns([2,1])
-with c_lang:
-    language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in labels_codes],
-                                  index=[lbl for lbl,_ in labels_codes].index(default_label))
-lang_code = dict(labels_codes)[language_label]
+# Select ocupa a largura toda, evitando cortes
+language_label = st.selectbox("Idioma de destino", [lbl for lbl, _ in options])
+lang_code = dict(options)[language_label]
+
+c_thr = st.columns([1])[0]
 with c_thr:
     throttle = st.number_input("Intervalo (s)", min_value=0.0, max_value=2.0, value=0.0, step=0.1)
 
