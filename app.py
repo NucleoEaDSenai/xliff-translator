@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 from lxml import etree as ET
 from deep_translator import GoogleTranslator
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="wide")
 
@@ -191,13 +192,12 @@ lang_code = dict(options)[language_label]
 
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
 
-# ——— Localiza o texto interno do uploader para PT-BR ———
 st.markdown("""
 <style>
-[data-testid="stFileUploaderDropzone"] {{ position: relative; }}
+[data-testid="stFileUploaderDropzone"] { position: relative; }
 [data-testid="stFileUploaderDropzone"] span,
-[data-testid="stFileUploaderDropzone"] p {{ visibility: hidden; }}
-[data-testid="stFileUploaderDropzone"]::before {{
+[data-testid="stFileUploaderDropzone"] p { visibility: hidden; }
+[data-testid="stFileUploaderDropzone"]::before {
   content: "Arraste e solte o arquivo aqui";
   visibility: visible;
   position: absolute;
@@ -205,8 +205,8 @@ st.markdown("""
   top: 18px;
   color: #fff;
   font-weight: 600;
-}}
-[data-testid="stFileUploaderDropzone"]::after {{
+}
+[data-testid="stFileUploaderDropzone"]::after {
   content: "Limite de 200MB por arquivo • XLF, XLIFF";
   visibility: visible;
   position: absolute;
@@ -214,9 +214,38 @@ st.markdown("""
   top: 44px;
   color: #bbb;
   font-size: 0.9rem;
-}}
+}
 </style>
 """, unsafe_allow_html=True)
+
+components.html("""
+<script>
+(function () {
+  function replaceText(root, matcher, newText) {
+    const nodes = root.querySelectorAll("p, span, div");
+    for (const n of nodes) {
+      const t = (n.textContent || "").trim();
+      if (matcher(t)) { n.textContent = newText; return true; }
+    }
+    return false;
+  }
+  function inject() {
+    const doc = window.parent.document;
+    const dz = doc.querySelector('[data-testid="stFileUploaderDropzone"]');
+    if (!dz) return false;
+    replaceText(dz, t => /drag and drop/i.test(t), "Arraste e solte o arquivo aqui");
+    replaceText(dz, t => /limit.*xlf|limit\\s*200\\s*mb/i.test(t), "Limite de 200 MB por arquivo • XLF, XLIFF");
+    const btn = doc.querySelector('[data-testid="stFileUploader"] button');
+    if (btn) {
+      const lbl = btn.querySelector("p, span, div");
+      if (lbl) lbl.textContent = "Escolher arquivo";
+    }
+    return true;
+  }
+  const id = setInterval(function(){ if (inject()) clearInterval(id); }, 80);
+})();
+</script>
+""", height=0)
 
 run = st.button("Traduzir arquivo")
 
