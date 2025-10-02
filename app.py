@@ -189,7 +189,6 @@ lang_code = dict(options)[language_label]
 
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
 
-# Tradução do texto do uploader sem sobreposição
 components.html("""
 <script>
 (function () {
@@ -221,19 +220,27 @@ components.html("""
 
 run = st.button("Traduzir arquivo")
 
-def process(data: bytes, lang_code: str):
+def process(data: bytes, lang_code: str, prog, status):
     parser = ET.XMLParser(remove_blank_text=False)
     root = ET.fromstring(data, parser=parser)
     pairs = iter_source_target_pairs(root)
-    for i,(src,tgt) in enumerate(pairs, start=1):
+    total = max(len(pairs), 1)
+    for i, (src, tgt) in enumerate(pairs, start=1):
         translate_node_texts(src, lang_code)
         tgt = ensure_target_for_source(src, tgt)
         tgt.clear()
-        for ch in list(src): tgt.append(deepcopy(ch))
+        for ch in list(src):
+            tgt.append(deepcopy(ch))
         tgt.text = safe_str(src.text)
-        if len(src): tgt[-1].tail = safe_str(src[-1].tail)
+        if len(src):
+            tgt[-1].tail = safe_str(src[-1].tail)
+        if i == 1 or i % 10 == 0 or i == total:
+            prog.progress(i / total)
+            status.write(f"Traduzindo segmentos… {i}/{total}")
     translate_all_notes(root, lang_code)
     translate_accessibility_attrs(root, lang_code)
+    prog.progress(1.0)
+    status.write("Finalizando arquivo…")
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
 
 if run:
@@ -247,10 +254,11 @@ if run:
         st.write(f"Segmentos detectados: **{total_pairs}**")
     except:
         total_pairs = 0
-    prog = st.progress(0.0); status = st.empty()
+    prog = st.progress(0.0)
+    status = st.empty()
     try:
-        out_bytes = process(data, lang_code)
-        prog.progress(1.0)
+        with st.spinner("Traduzindo…"):
+            out_bytes = process(data, lang_code, prog, status)
         st.success("Tradução concluída!")
         base = os.path.splitext(uploaded.name)[0]
         out_name = f"{base}-{lang_code}.xlf"
