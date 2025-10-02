@@ -189,7 +189,35 @@ options.sort(key=lambda x: x[0])
 language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in options])
 lang_code = dict(options)[language_label]
 
-uploaded = st.file_uploader("Selecione o arquivo com extensão .xlf/.xliff", type=["xlf","xliff"])
+uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
+
+# ——— Localiza o texto interno do uploader para PT-BR ———
+st.markdown("""
+<style>
+[data-testid="stFileUploaderDropzone"] {{ position: relative; }}
+[data-testid="stFileUploaderDropzone"] span,
+[data-testid="stFileUploaderDropzone"] p {{ visibility: hidden; }}
+[data-testid="stFileUploaderDropzone"]::before {{
+  content: "Arraste e solte o arquivo aqui";
+  visibility: visible;
+  position: absolute;
+  left: 56px;
+  top: 18px;
+  color: #fff;
+  font-weight: 600;
+}}
+[data-testid="stFileUploaderDropzone"]::after {{
+  content: "Limite de 200MB por arquivo • XLF, XLIFF";
+  visibility: visible;
+  position: absolute;
+  left: 56px;
+  top: 44px;
+  color: #bbb;
+  font-size: 0.9rem;
+}}
+</style>
+""", unsafe_allow_html=True)
+
 run = st.button("Traduzir arquivo")
 
 def process(data: bytes, lang_code: str):
