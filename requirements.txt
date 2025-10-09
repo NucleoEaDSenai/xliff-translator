@@ -2,3 +2,4 @@ streamlit
 lxml
 deep-translator
 pandas
+language-tool-python
