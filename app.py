@@ -1,16 +1,18 @@
-import os, time, re, base64
+import os, time, re, base64, html
 from copy import deepcopy
 from typing import List, Tuple, Optional
 from pathlib import Path
-
 import streamlit as st
 from lxml import etree as ET
 from deep_translator import GoogleTranslator
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="wide")
-
+# ==============================
+# CONFIGURAÇÃO DE INTERFACE
+# ==============================
+st.set_page_config(page_title="Tradutor & Revisor XLIFF • Firjan SENAI", page_icon="🌍", layout="wide")
 PRIMARY = "#83c7e5"
+
 st.markdown(f"""
 <style>
 body {{ background:#000; color:#fff; }}
@@ -29,19 +31,18 @@ def show_logo():
     p = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
     if p.exists():
         b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
-        st.markdown(
-            f"""
-            <div style="width:100%;display:flex;justify-content:left;margin-bottom:4px;">
-              <img src="data:image/png;base64,{b64}" style="max-width:250px;width:100%;height:100px;display:block;" />
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
+        st.markdown(f"""
+        <div style="width:100%;display:flex;justify-content:left;margin-bottom:4px;">
+          <img src="data:image/png;base64,{b64}" style="max-width:250px;width:100%;height:100px;display:block;" />
+        </div>""", unsafe_allow_html=True)
 show_logo()
-st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor de Cursos - Articulate Rise</h1>", unsafe_allow_html=True)
-st.caption("Tradução completa de cursos do Português para outras línguas")
 
+st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor e Revisor de Cursos - Articulate Rise</h1>", unsafe_allow_html=True)
+st.caption("Tradução e revisão completa de cursos do Rise em formato XLIFF")
+
+# ==============================
+# FUNÇÕES AUXILIARES
+# ==============================
 def safe_str(x)->str:
     return "" if x is None else str(x)
 
@@ -71,6 +72,9 @@ def restore_nontranslatable(text:str, tokens):
     except:
         return text
 
+# ==============================
+# TRADUÇÃO
+# ==============================
 def translate_text_unit(text:str, target_lang:str)->str:
     text = safe_str(text)
     if not text.strip(): return text
@@ -82,6 +86,39 @@ def translate_text_unit(text:str, target_lang:str)->str:
         out = t
     return safe_str(restore_nontranslatable(out, toks))
 
+# ==============================
+# REVISÃO (IA OFFLINE)
+# ==============================
+def revise_text_natural(text:str)->str:
+    """Revisão textual leve e natural (offline, sem APIs externas)"""
+    text = safe_str(text)
+    if not text.strip(): return text
+    original = text
+    t, toks = protect_nontranslatable(text)
+
+    # Pequenas correções
+    t = re.sub(r"\s+", " ", t)  # remover espaços duplos
+    t = re.sub(r"\s([?.!,;:])", r"\1", t)  # ajustar pontuação
+    t = re.sub(r"\bdeve-se\b", "deve", t)
+    t = re.sub(r"\bpara que possa\b", "para que você possa", t)
+    t = re.sub(r"\bnecessário\b", "preciso", t)
+    t = re.sub(r"\bconsulte, sempre que necessário\b", "consulte sempre que precisar", t)
+    t = re.sub(r"\bconsiderando que\b", "como", t)
+    t = re.sub(r"\bafim de\b", "para", t)
+    t = re.sub(r"\bprossiga\b", "siga", t)
+    t = t.strip()
+    if t and not t.endswith(('.', '?', '!')):
+        t += '.'
+
+    out = restore_nontranslatable(t, toks)
+    # Evita perder maiúsculas iniciais
+    if original and original[0].isupper() and out:
+        out = out[0].upper() + out[1:]
+    return out
+
+# ==============================
+# XML / XLIFF
+# ==============================
 def get_namespaces(root)->dict:
     nsmap={}
     if root.nsmap:
@@ -93,7 +130,7 @@ def get_namespaces(root)->dict:
 
 def detect_version(root)->str:
     d = root.nsmap.get(None,"") or ""
-    if "urn:oasis:names:tc:xliff:document:2.0" in d or (root.get("version","")== "2.0"):
+    if "2.0" in d or (root.get("version","")== "2.0"):
         return "2.0"
     return "1.2"
 
@@ -120,155 +157,106 @@ def ensure_target_for_source(src:ET._Element, tgt:Optional[ET._Element])->ET._El
     qn=ET.QName(src); tag=qn.localname.replace("source","target")
     return ET.SubElement(src.getparent(), f"{{{qn.namespace}}}{tag}") if qn.namespace else ET.SubElement(src.getparent(),"target")
 
-def translate_node_texts(elem:ET._Element, lang:str):
-    if elem.text is not None and safe_str(elem.text).strip():
-        elem.text = translate_text_unit(elem.text, lang)
-    for child in list(elem):
-        translate_node_texts(child, lang)
-        if child.tail is not None and safe_str(child.tail).strip():
-            child.tail = translate_text_unit(child.tail, lang)
+# ==============================
+# INTERFACE
+# ==============================
+mode = st.selectbox("Ação desejada", ["Traduzir", "Revisar texto", "Traduzir + Revisar"])
 
-def translate_all_notes(root:ET._Element, lang:str):
-    for note in root.findall(".//{*}note"):
-        translate_node_texts(note, lang)
-
-def translate_accessibility_attrs(root:ET._Element, lang:str):
-    ATTRS=("title","alt","aria-label")
-    for el in root.iter():
-        for k in ATTRS:
-            if k in el.attrib:
-                val=safe_str(el.attrib.get(k))
-                if val.strip():
-                    el.attrib[k]=translate_text_unit(val, lang)
-
-PT_FULL = {
-    "af":"Africâner","sq":"Albanês","am":"Amárico","ar":"Árabe","hy":"Armênio","az":"Azerbaijano",
-    "eu":"Basco","be":"Bielorrusso","bn":"Bengali","bs":"Bósnio","bg":"Búlgaro","ca":"Catalão",
-    "ceb":"Cebuano","ny":"Chichewa","zh-CN":"Chinês (Simplificado)","zh-TW":"Chinês (Tradicional)",
-    "co":"Corso","hr":"Croata","cs":"Tcheco","da":"Dinamarquês","nl":"Holandês","en":"Inglês",
-    "eo":"Esperanto","et":"Estoniano","fi":"Finlandês","fr":"Francês","fy":"Frísio","gl":"Galego",
-    "ka":"Georgiano","de":"Alemão","el":"Grego","gu":"Guzerate","ht":"Crioulo haitiano",
-    "ha":"Hauçá","haw":"Havaiano","he":"Hebraico","hi":"Hindi","hmn":"Hmong","hu":"Húngaro",
-    "is":"Islandês","ig":"Igbo","id":"Indonésio","ga":"Irlandês (Gaélico)","it":"Italiano","ja":"Japonês",
-    "jw":"Javanês","kn":"Canarim","kk":"Cazaque","km":"Khmer","ko":"Coreano","ku":"Curdo",
-    "ky":"Quirguiz","lo":"Lao","la":"Latim","lv":"Letão","lt":"Lituano","lb":"Luxemburguês",
-    "mk":"Macedônio","mg":"Malgaxe","ms":"Malaio","ml":"Malaiala","mt":"Maltês","mi":"Maori",
-    "mr":"Marati","mn":"Mongol","my":"Myanmar (Birmanês)","ne":"Nepalês","no":"Norueguês",
-    "or":"Oriá","ps":"Pachto","fa":"Persa (Farsi)","pl":"Polonês","pt":"Português",
-    "pa":"Punjabi","ro":"Romeno","ru":"Russo","sm":"Samoano","gd":"Gaélico escocês","sr":"Sérvio",
-    "st":"Sesoto","sn":"Shona","sd":"Sindi","si":"Sinhala","sk":"Eslovaco","sl":"Esloveno",
-    "so":"Somali","es":"Espanhol","su":"Sundanês","sw":"Suaíli","sv":"Sueco","tl":"Filipino",
-    "tg":"Tadjique","ta":"Tâmil","te":"Télugo","th":"Tailandês","tr":"Turco","uk":"Ucraniano",
-    "ur":"Urdu","uz":"Uzbeque","vi":"Vietnamita","cy":"Galês","xh":"Xhosa","yi":"Iídiche",
-    "yo":"Iorubá","zu":"Zulu"
-}
-
-def get_google_lang_pairs():
-    try:
-        d = GoogleTranslator().get_supported_languages(as_dict=True)
-        k, v = next(iter(d.items()))
-        if isinstance(v, str) and (len(v) <= 10 and v.isalpha() or "-" in v):
-            pairs = [(v, k)]
-            for name, code in list(d.items())[1:]:
-                pairs.append((code, name))
-        else:
-            pairs = list(d.items())
-    except Exception:
-        pairs = [("en","english"),("pt","portuguese"),("es","spanish"),("fr","french"),("de","german"),("it","italian")]
-    return pairs
-
-pairs = get_google_lang_pairs()
-options = []
-for code, engname in pairs:
-    label = PT_FULL.get(code, engname.capitalize())
-    options.append((label, code))
-options.sort(key=lambda x: x[0])
-
-language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in options])
+pairs = GoogleTranslator().get_supported_languages(as_dict=True)
+options = sorted([(v.capitalize(), k) for k, v in pairs.items()])
+language_label = st.selectbox("Idioma de destino (para tradução)", [lbl for lbl,_ in options])
 lang_code = dict(options)[language_label]
 
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
+run = st.button("Executar")
 
-components.html("""
-<script>
-(function () {
-  function replaceText(root, matcher, newText) {
-    const nodes = root.querySelectorAll("p, span, div");
-    for (const n of nodes) {
-      const t = (n.textContent || "").trim();
-      if (matcher(t)) { n.textContent = newText; return true; }
-    }
-    return false;
-  }
-  function inject() {
-    const doc = window.parent.document;
-    const dz = doc.querySelector('[data-testid="stFileUploaderDropzone"]');
-    if (!dz) return false;
-    replaceText(dz, t => /drag and drop/i.test(t), "Arraste e solte o arquivo aqui");
-    replaceText(dz, t => /limit.*xlf|limit\\s*200\\s*mb/i.test(t), "Limite de 200 MB por arquivo • XLF, XLIFF");
-    const btn = doc.querySelector('[data-testid="stFileUploader"] button');
-    if (btn) {
-      const lbl = btn.querySelector("p, span, div");
-      if (lbl) lbl.textContent = "Escolher arquivo";
-    }
-    return true;
-  }
-  const id = setInterval(function(){ if (inject()) clearInterval(id); }, 80);
-})();
-</script>
-""", height=0)
-
-run = st.button("Traduzir arquivo")
-
-def process(data: bytes, lang_code: str, prog, status):
+# ==============================
+# PROCESSAMENTO
+# ==============================
+def process(data: bytes, lang_code: str, prog, status, mode: str):
     parser = ET.XMLParser(remove_blank_text=False)
     root = ET.fromstring(data, parser=parser)
     pairs = iter_source_target_pairs(root)
     total = max(len(pairs), 1)
     status.text("0% concluído…")
     prog.progress(0.0)
+
+    report_rows = []
     for i, (src, tgt) in enumerate(pairs, start=1):
-        translate_node_texts(src, lang_code)
+        text_original = safe_str(src.text)
+        text_result = text_original
+
+        if mode in ["Traduzir", "Traduzir + Revisar"]:
+            text_result = translate_text_unit(text_result, lang_code)
+        if mode in ["Revisar texto", "Traduzir + Revisar"]:
+            revised = revise_text_natural(text_result)
+            if revised != text_result:
+                report_rows.append((text_original, revised))
+            text_result = revised
+
         tgt = ensure_target_for_source(src, tgt)
         tgt.clear()
-        for ch in list(src):
-            tgt.append(deepcopy(ch))
-        tgt.text = safe_str(src.text)
-        if len(src):
-            tgt[-1].tail = safe_str(src[-1].tail)
+        tgt.text = safe_str(text_result)
+
         if i == 1 or i % 10 == 0 or i == total:
             frac = i / total
-            percent = int(round(frac * 100))
             prog.progress(frac)
-            status.text(f"{percent}% concluído…")
-    translate_all_notes(root, lang_code)
-    translate_accessibility_attrs(root, lang_code)
+            status.text(f"{int(frac*100)}% concluído…")
+
     prog.progress(1.0)
     status.text("100% concluído — finalizando arquivo…")
+
+    # Gera relatório HTML
+    if report_rows:
+        html_rows = "".join(
+            f"<tr><td>{html.escape(o)}</td><td>{html.escape(r)}</td></tr>"
+            for o, r in report_rows
+        )
+        html_content = f"""
+        <html><head><meta charset='utf-8'>
+        <style>
+        body {{font-family:Arial,sans-serif;background:#111;color:#eee;padding:20px;}}
+        table {{width:100%;border-collapse:collapse;}}
+        th,td {{border:1px solid #444;padding:8px;vertical-align:top;}}
+        th {{background:#222;}}
+        tr:nth-child(even) {{background:#1b1b1b;}}
+        td:first-child {{color:#f88;}}
+        td:last-child {{color:#8f8;}}
+        </style></head><body>
+        <h2>Relatório de Revisão Textual</h2>
+        <table>
+        <tr><th>Original</th><th>Revisado</th></tr>
+        {html_rows}
+        </table></body></html>
+        """
+        Path("relatorio_revisao.html").write_text(html_content, encoding="utf-8")
+
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
 
+# ==============================
+# EXECUÇÃO
+# ==============================
 if run:
     if not uploaded:
         st.error("Envie um arquivo .xlf/.xliff.")
         st.stop()
     data = uploaded.read()
-    try:
-        tmp_root = ET.fromstring(data, parser=ET.XMLParser(remove_blank_text=False))
-        total_pairs = len(iter_source_target_pairs(tmp_root))
-        st.write(f"Segmentos detectados: **{total_pairs}**")
-    except:
-        total_pairs = 0
     prog = st.progress(0.0)
     status = st.empty()
     try:
-        with st.spinner("Traduzindo…"):
-            out_bytes = process(data, lang_code, prog, status)
-        st.success("Tradução concluída!")
+        with st.spinner("Processando…"):
+            out_bytes = process(data, lang_code, prog, status, mode)
+        st.success("Processo concluído com sucesso!")
         base = os.path.splitext(uploaded.name)[0]
-        out_name = f"{base}-{lang_code}.xlf"
-        st.download_button("Baixar XLIFF traduzido", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
+        suffix = "revisado" if "Revisar" in mode else lang_code
+        out_name = f"{base}-{suffix}.xlf"
+        st.download_button("Baixar arquivo processado", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
+        if Path("relatorio_revisao.html").exists():
+            st.info("Relatório de revisão gerado: relatorio_revisao.html")
+            with open("relatorio_revisao.html", "r", encoding="utf-8") as f:
+                components.html(f.read(), height=400, scrolling=True)
     except Exception as e:
-        st.error(f"Erro ao traduzir: {e}")
+        st.error(f"Erro ao processar: {e}")
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.markdown("<div class='footer'>Direitos Reservados à Área de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
