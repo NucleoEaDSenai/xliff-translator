@@ -77,49 +77,101 @@ def translate_text_unit(text:str, target_lang:str)->str:
     return restore_nontranslatable(out, toks)
 
 # ==============================
-# REVISÃO GERAL (ONLINE)
+# REVISÃO GERAL (ONLINE COM FALLBACKS)
 # ==============================
-tool = language_tool_python.LanguageToolPublicAPI('pt-BR')
+import json, requests
+from spellchecker import SpellChecker
+import language_tool_python
+
+# Inicialização segura do corretor principal
+def get_language_tool():
+    try:
+        return language_tool_python.LanguageToolPublicAPI('pt-BR')
+    except Exception:
+        try:
+            return language_tool_python.LanguageTool('pt-BR')  # modo local se disponível
+        except Exception:
+            return None
+
+tool = get_language_tool()
+spell = SpellChecker(language='pt')
+
+def grammarbot_check(text: str) -> str:
+    """Fallback: usa GrammarBot API gratuita."""
+    try:
+        url = "https://api.grammarbot.io/v2/check"
+        payload = {"text": text, "language": "pt-BR"}
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        r = requests.post(url, data=payload, headers=headers, timeout=10)
+        if r.status_code == 200:
+            result = r.json()
+            corrections = result.get("matches", [])
+            for c in corrections:
+                repls = c.get("replacements", [])
+                if repls:
+                    offset = c["offset"]
+                    length = c["length"]
+                    replacement = repls[0]["value"]
+                    text = text[:offset] + replacement + text[offset+length:]
+        return text
+    except Exception:
+        return text
+
+def spell_check_local(text: str) -> str:
+    """Fallback final: correção ortográfica local."""
+    words = text.split()
+    corrected = []
+    for w in words:
+        corrected.append(spell.correction(w) or w)
+    return " ".join(corrected)
 
 def revise_text_general(text:str)->str:
-    """Revisão geral automática com LanguageTool + heurísticas."""
+    """Revisão geral com fallback em 3 camadas: LanguageTool → GrammarBot → SpellCheck."""
     text = safe_str(text)
     if not text.strip(): return text
     original = text
     t, toks = protect_nontranslatable(text)
 
-    # 1. Correção gramatical e ortográfica
-    try:
-        matches = tool.check(t)
-        t = language_tool_python.utils.correct(t, matches)
-    except:
-        pass
+    # 1️⃣ Tentativa: LanguageTool (principal)
+    revised = t
+    if tool:
+        try:
+            matches = tool.check(t)
+            revised = language_tool_python.utils.correct(t, matches)
+        except language_tool_python.utils.RateLimitError:
+            revised = grammarbot_check(t)
+        except Exception:
+            revised = grammarbot_check(t)
+    else:
+        revised = grammarbot_check(t)
 
-    # 2. Ajustes de fluidez e estilo educacional
+    # 2️⃣ Se ainda não houver mudança, aplicar spell check local
+    if revised.strip() == t.strip():
+        revised = spell_check_local(t)
+
+    # 3️⃣ Ajustes de fluidez e estilo educacional
     subs = {
         r"\bO aluno\b": "Você",
         r"\bo aluno\b": "você",
         r"\ba aluna\b": "você",
         r"\bdeverá\b": "deve",
-        r"\bdeverao\b": "devem",
         r"\bpara que possa\b": "para que você possa",
         r"\bconsulte, sempre que necessário\b": "consulte sempre que precisar",
         r"\ba fim de\b": "para",
-        r"\bafim de\b": "para",
         r"\bprossiga\b": "siga",
         r"\bnecessário\b": "preciso"
     }
     for pat, repl in subs.items():
-        t = re.sub(pat, repl, t, flags=re.IGNORECASE)
+        revised = re.sub(pat, repl, revised, flags=re.IGNORECASE)
 
-    # 3. Padronização de espaços e pontuação
-    t = re.sub(r"\s+", " ", t)
-    t = re.sub(r"\s([?.!,;:])", r"\1", t)
-    t = t.strip()
-    if t and not t.endswith(('.', '?', '!')):
-        t += '.'
+    # 4️⃣ Padronização de espaços e pontuação
+    revised = re.sub(r"\s+", " ", revised)
+    revised = re.sub(r"\s([?.!,;:])", r"\1", revised)
+    revised = revised.strip()
+    if revised and not revised.endswith(('.', '?', '!')):
+        revised += '.'
 
-    out = restore_nontranslatable(t, toks)
+    out = restore_nontranslatable(revised, toks)
     if original and original[0].isupper() and out:
         out = out[0].upper() + out[1:]
     return out

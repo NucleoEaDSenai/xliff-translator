@@ -1,5 +1,6 @@
 streamlit
 lxml
 deep-translator
-pandas
 language-tool-python
+requests
+pyspellchecker
