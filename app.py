@@ -141,54 +141,41 @@ def translate_accessibility_attrs(root:ET._Element, lang:str):
                 if val.strip():
                     el.attrib[k]=translate_text_unit(val, lang)
 
-# 🔧 Correção de espaços entre tags de formatação
+# 🩹 Correção completa de espaçamento entre tags e texto
 def fix_spacing_around_tags(root):
+    """
+    Corrige falta de espaços entre texto e tags (ex: <b>, <i>, <strong>).
+    Exemplo: 'el<b>periodo</b>y' → 'el <b>periodo</b> y'
+    """
     for el in root.iter():
+        for child in list(el):
+            # Se o texto antes da primeira tag não termina com espaço
+            if el.text and child is el[0] and not el.text.endswith((" ", "\n")):
+                el.text += " "
+            # Se a tail (texto após a tag) existe e não começa com espaço
+            if child.tail:
+                if not child.tail.startswith((" ", "\n")):
+                    child.tail = " " + child.tail
+            else:
+                # Se não há tail, cria espaço para não colar
+                child.tail = " "
+        # Limpa duplicidades
         if el.text:
-            el.text = re.sub(r'(?<=\w)(</?\w+>)', r' \1', el.text)
-            el.text = re.sub(r'(</?\w+>)(?=\w)', r'\1 ', el.text)
-        if el.tail:
-            el.tail = re.sub(r'(?<=\w)(</?\w+>)', r' \1', el.tail)
-            el.tail = re.sub(r'(</?\w+>)(?=\w)', r'\1 ', el.tail)
-        if el.text:
-            el.text = re.sub(r'\s{2,}', ' ', el.text)
-        if el.tail:
-            el.tail = re.sub(r'\s{2,}', ' ', el.tail)
+            el.text = re.sub(r'\s{2,}', ' ', el.text.strip())
+        for child in list(el):
+            if child.tail:
+                child.tail = re.sub(r'\s{2,}', ' ', child.tail.strip() + " ")
 
 PT_FULL = {
-    "af":"Africâner","sq":"Albanês","am":"Amárico","ar":"Árabe","hy":"Armênio","az":"Azerbaijano",
-    "eu":"Basco","be":"Bielorrusso","bn":"Bengali","bs":"Bósnio","bg":"Búlgaro","ca":"Catalão",
-    "ceb":"Cebuano","ny":"Chichewa","zh-CN":"Chinês (Simplificado)","zh-TW":"Chinês (Tradicional)",
-    "co":"Corso","hr":"Croata","cs":"Tcheco","da":"Dinamarquês","nl":"Holandês","en":"Inglês",
-    "eo":"Esperanto","et":"Estoniano","fi":"Finlandês","fr":"Francês","fy":"Frísio","gl":"Galego",
-    "ka":"Georgiano","de":"Alemão","el":"Grego","gu":"Guzerate","ht":"Crioulo haitiano",
-    "ha":"Hauçá","haw":"Havaiano","he":"Hebraico","hi":"Hindi","hmn":"Hmong","hu":"Húngaro",
-    "is":"Islandês","ig":"Igbo","id":"Indonésio","ga":"Irlandês (Gaélico)","it":"Italiano","ja":"Japonês",
-    "jw":"Javanês","kn":"Canarim","kk":"Cazaque","km":"Khmer","ko":"Coreano","ku":"Curdo",
-    "ky":"Quirguiz","lo":"Lao","la":"Latim","lv":"Letão","lt":"Lituano","lb":"Luxemburguês",
-    "mk":"Macedônio","mg":"Malgaxe","ms":"Malaio","ml":"Malaiala","mt":"Maltês","mi":"Maori",
-    "mr":"Marati","mn":"Mongol","my":"Myanmar (Birmanês)","ne":"Nepalês","no":"Norueguês",
-    "or":"Oriá","ps":"Pachto","fa":"Persa (Farsi)","pl":"Polonês","pt":"Português",
-    "pa":"Punjabi","ro":"Romeno","ru":"Russo","sm":"Samoano","gd":"Gaélico escocês","sr":"Sérvio",
-    "st":"Sesoto","sn":"Shona","sd":"Sindi","si":"Sinhala","sk":"Eslovaco","sl":"Esloveno",
-    "so":"Somali","es":"Espanhol","su":"Sundanês","sw":"Suaíli","sv":"Sueco","tl":"Filipino",
-    "tg":"Tadjique","ta":"Tâmil","te":"Télugo","th":"Tailandês","tr":"Turco","uk":"Ucraniano",
-    "ur":"Urdu","uz":"Uzbeque","vi":"Vietnamita","cy":"Galês","xh":"Xhosa","yi":"Iídiche",
-    "yo":"Iorubá","zu":"Zulu"
+    "es":"Espanhol","en":"Inglês","fr":"Francês","de":"Alemão","it":"Italiano","pt":"Português"
 }
 
 def get_google_lang_pairs():
     try:
         d = GoogleTranslator().get_supported_languages(as_dict=True)
-        k, v = next(iter(d.items()))
-        if isinstance(v, str) and (len(v) <= 10 and v.isalpha() or "-" in v):
-            pairs = [(v, k)]
-            for name, code in list(d.items())[1:]:
-                pairs.append((code, name))
-        else:
-            pairs = list(d.items())
+        pairs = list(d.items())
     except Exception:
-        pairs = [("en","english"),("pt","portuguese"),("es","spanish"),("fr","french"),("de","german"),("it","italian")]
+        pairs = [("es","spanish"),("en","english"),("fr","french"),("de","german"),("it","italian")]
     return pairs
 
 pairs = get_google_lang_pairs()
@@ -257,7 +244,7 @@ def process(data: bytes, lang_code: str, prog, status):
             status.text(f"{percent}% concluído…")
     translate_all_notes(root, lang_code)
     translate_accessibility_attrs(root, lang_code)
-    fix_spacing_around_tags(root)  # 🩹 aplica a correção aqui
+    fix_spacing_around_tags(root)  # 🔧 chamada final que resolve o espaçamento
     prog.progress(1.0)
     status.text("100% concluído — finalizando arquivo…")
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
@@ -286,4 +273,4 @@ if run:
         st.error(f"Erro ao traduzir: {e}")
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-st.markdown("<div class='footer'>Direitos Reservados à Áreaa de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer'>Direitos Reservados à Área de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
