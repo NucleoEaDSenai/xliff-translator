@@ -1,3 +1,4 @@
 streamlit
 lxml
-requests
+deep-translator
+pandas
