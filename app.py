@@ -82,11 +82,11 @@ def restore_nontranslatable(text: str, tokens):
         return text
 
 # ===============================================
-# FUNÇÃO DE TRADUÇÃO VIA LIBRETRANSLATE
+# FUNÇÃO DE TRADUÇÃO VIA LIBRETRANSLATE (COM FALLBACK)
 # ===============================================
 def translate_text_unit(text: str, target_lang: str) -> str:
     """
-    Tradução via API pública do LibreTranslate.
+    Tradução via LibreTranslate com fallback entre endpoints públicos.
     Mantém placeholders e estrutura XML intacta.
     """
     text = safe_str(text)
@@ -95,28 +95,38 @@ def translate_text_unit(text: str, target_lang: str) -> str:
 
     t, toks = protect_nontranslatable(text)
     out = t
-    try:
-        resp = requests.post(
-            "https://libretranslate.com/translate",
-            data={
-                "q": t,
-                "source": "auto",
-                "target": target_lang,
-                "format": "text"
-            },
-            timeout=20
-        )
-        if resp.status_code == 200:
-            out = resp.json().get("translatedText", t)
-        else:
-            print(f"[ERRO {resp.status_code}] {resp.text}")
-    except Exception as e:
-        print(f"[ERRO LIBRETRANSLATE] {e}")
-        out = t
+
+    endpoints = [
+        "https://libretranslate.com/translate",  # endpoint principal
+        "https://translate.argosopentech.com/translate",  # backup 1
+        "https://translate.astian.org/translate",  # backup 2
+    ]
+
+    payload = {
+        "q": t,
+        "source": "auto",  # detecta automaticamente idioma de origem
+        "target": target_lang,
+        "format": "text"
+    }
+
+    headers = {"Content-Type": "application/json"}
+
+    for url in endpoints:
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            if resp.status_code == 200 and "translatedText" in resp.json():
+                out = resp.json()["translatedText"]
+                break
+            else:
+                print(f"[ERRO {resp.status_code}] em {url}: {resp.text}")
+        except Exception as e:
+            print(f"[ERRO LIBRETRANSLATE - {url}] {e}")
+            continue
+
     return safe_str(restore_nontranslatable(out, toks))
 
 # ===============================================
-# FUNÇÕES XML E TRADUÇÃO
+# XML E TRADUÇÃO
 # ===============================================
 def get_namespaces(root) -> dict:
     nsmap = {}
@@ -179,7 +189,7 @@ def translate_accessibility_attrs(root: ET._Element, lang: str):
                     el.attrib[k] = translate_text_unit(val, lang)
 
 # ===============================================
-# INTERFACE DE SELEÇÃO
+# INTERFACE
 # ===============================================
 options = [
     ("Inglês", "en"),
