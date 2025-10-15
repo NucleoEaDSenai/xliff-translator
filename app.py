@@ -295,4 +295,4 @@ if run:
         st.error(f"Erro ao traduzir: {e}")
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-st.markdown("<div class='footer'>Direitos Reservados à Área de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer'>Direitos Reservadoss à Área de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
