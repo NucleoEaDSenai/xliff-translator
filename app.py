@@ -1,4 +1,4 @@
-import os, time, re, base64
+import os, time, re, base64, requests
 from copy import deepcopy
 from typing import List, Tuple, Optional
 from pathlib import Path
@@ -6,10 +6,6 @@ from pathlib import Path
 import streamlit as st
 from lxml import etree as ET
 import streamlit.components.v1 as components
-
-# === NOVO: dependências NLLB ===
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import torch
 
 # ===============================================
 # CONFIGURAÇÃO GERAL
@@ -64,11 +60,9 @@ def protect_nontranslatable(text: str):
     if not text:
         return "", []
     tokens = []
-
     def _sub(m):
         tokens.append(m.group(0))
         return f"§§K{len(tokens)-1}§§"
-
     try:
         protected = PLACEHOLDER_RE.sub(_sub, text)
     except:
@@ -88,49 +82,41 @@ def restore_nontranslatable(text: str, tokens):
         return text
 
 # ===============================================
-# === NOVA FUNÇÃO DE TRADUÇÃO (NLLB) ============
+# FUNÇÃO DE TRADUÇÃO VIA LIBRETRANSLATE
 # ===============================================
-@st.cache_resource
-def load_nllb_model():
-    model_name = "facebook/nllb-200-distilled-600M"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    return tokenizer, model
-
-tokenizer, model = load_nllb_model()
-
-LANG_NLLB = {
-    "en": "eng_Latn",
-    "pt": "por_Latn",
-    "es": "spa_Latn",
-    "fr": "fra_Latn",
-    "de": "deu_Latn",
-    "it": "ita_Latn",
-}
-
 def translate_text_unit(text: str, target_lang: str) -> str:
+    """
+    Tradução via API pública do LibreTranslate.
+    Mantém placeholders e estrutura XML intacta.
+    """
     text = safe_str(text)
     if not text.strip():
         return text
+
     t, toks = protect_nontranslatable(text)
     out = t
     try:
-        tgt = LANG_NLLB.get(target_lang, "por_Latn")
-        inputs = tokenizer(t, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        translated_tokens = model.generate(
-            **inputs,
-            forced_bos_token_id=tokenizer.lang_code_to_id[tgt],
-            max_length=512
+        resp = requests.post(
+            "https://libretranslate.com/translate",
+            data={
+                "q": t,
+                "source": "auto",
+                "target": target_lang,
+                "format": "text"
+            },
+            timeout=20
         )
-        translated_text = tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
-        out = translated_text
+        if resp.status_code == 200:
+            out = resp.json().get("translatedText", t)
+        else:
+            print(f"[ERRO {resp.status_code}] {resp.text}")
     except Exception as e:
-        print(f"[ERRO NLLB] {e}")
+        print(f"[ERRO LIBRETRANSLATE] {e}")
         out = t
     return safe_str(restore_nontranslatable(out, toks))
 
 # ===============================================
-# XML & TRADUÇÃO
+# FUNÇÕES XML E TRADUÇÃO
 # ===============================================
 def get_namespaces(root) -> dict:
     nsmap = {}
@@ -195,9 +181,17 @@ def translate_accessibility_attrs(root: ET._Element, lang: str):
 # ===============================================
 # INTERFACE DE SELEÇÃO
 # ===============================================
-options = [("Inglês", "en"), ("Português", "pt"), ("Espanhol", "es"), ("Francês", "fr"), ("Alemão", "de"), ("Italiano", "it")]
+options = [
+    ("Inglês", "en"),
+    ("Português", "pt"),
+    ("Espanhol", "es"),
+    ("Francês", "fr"),
+    ("Alemão", "de"),
+    ("Italiano", "it"),
+]
 language_label = st.selectbox("Idioma de destino", [lbl for lbl, _ in options])
 lang_code = dict(options)[language_label]
+
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf", "xliff"])
 
 components.html("""
