@@ -141,6 +141,20 @@ def translate_accessibility_attrs(root:ET._Element, lang:str):
                 if val.strip():
                     el.attrib[k]=translate_text_unit(val, lang)
 
+# 🔧 Correção de espaços entre tags de formatação
+def fix_spacing_around_tags(root):
+    for el in root.iter():
+        if el.text:
+            el.text = re.sub(r'(?<=\w)(</?\w+>)', r' \1', el.text)
+            el.text = re.sub(r'(</?\w+>)(?=\w)', r'\1 ', el.text)
+        if el.tail:
+            el.tail = re.sub(r'(?<=\w)(</?\w+>)', r' \1', el.tail)
+            el.tail = re.sub(r'(</?\w+>)(?=\w)', r'\1 ', el.tail)
+        if el.text:
+            el.text = re.sub(r'\s{2,}', ' ', el.text)
+        if el.tail:
+            el.tail = re.sub(r'\s{2,}', ' ', el.tail)
+
 PT_FULL = {
     "af":"Africâner","sq":"Albanês","am":"Amárico","ar":"Árabe","hy":"Armênio","az":"Azerbaijano",
     "eu":"Basco","be":"Bielorrusso","bn":"Bengali","bs":"Bósnio","bg":"Búlgaro","ca":"Catalão",
@@ -243,6 +257,7 @@ def process(data: bytes, lang_code: str, prog, status):
             status.text(f"{percent}% concluído…")
     translate_all_notes(root, lang_code)
     translate_accessibility_attrs(root, lang_code)
+    fix_spacing_around_tags(root)  # 🩹 aplica a correção aqui
     prog.progress(1.0)
     status.text("100% concluído — finalizando arquivo…")
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
@@ -271,4 +286,4 @@ if run:
         st.error(f"Erro ao traduzir: {e}")
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-st.markdown("<div class='footer'>Direitos Reservados à Área de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer'>Direitos Reservados à Áreaa de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
