@@ -101,30 +101,44 @@ def get_namespaces(root) -> dict:
         nsmap = {"ns": "urn:oasis:names:tc:xliff:document:1.2"}
     return nsmap
 
-def detect_version(root) -> str:
-    d = root.nsmap.get(None, "")
-    if "xliff:document:2.0" in d or root.get("version") == "2.0":
-        return "2.0"
-    return "1.2"
-
 def iter_source_target_pairs(root) -> List:
-    ns = get_namespaces(root)
-    v = detect_version(root)
+    """
+    Retorna pares (source, target) compatíveis com XLIFF 1.2 e 2.0,
+    mesmo quando o namespace não tem prefixo (problema comum no Rise).
+    """
     pairs = []
-    if v == "2.0":
-        units = root.xpath(".//ns:unit", namespaces=ns) or root.findall(".//unit")
-        for u in units:
-            segs = u.xpath(".//ns:segment", namespaces=ns) or u.findall(".//segment")
-            for s in segs:
-                src = s.find(".//{*}source")
-                tgt = s.find(".//{*}target")
+    try:
+        nsmap = root.nsmap or {}
+        # Define um prefixo genérico se não existir
+        ns_uri = nsmap.get(None, "urn:oasis:names:tc:xliff:document:1.2")
+        nsmap["x"] = ns_uri
+
+        version = root.get("version", "")
+        if "2.0" in version:
+            units = root.xpath(".//x:unit", namespaces=nsmap)
+            for u in units:
+                segs = u.xpath(".//x:segment", namespaces=nsmap)
+                for s in segs:
+                    src = s.find(".//{*}source")
+                    tgt = s.find(".//{*}target")
+                    if src is not None:
+                        pairs.append((src, tgt))
+        else:
+            units = root.xpath(".//x:trans-unit", namespaces=nsmap)
+            if not units:  # fallback sem namespace
+                units = root.findall(".//trans-unit")
+            for u in units:
+                src = u.find(".//{*}source") or u.find("source")
+                tgt = u.find(".//{*}target") or u.find("target")
                 if src is not None:
                     pairs.append((src, tgt))
-    else:
-        units = root.xpath(".//ns:trans-unit", namespaces=ns) or root.findall(".//trans-unit")
-        for u in units:
-            src = u.find(".//{*}source")
-            tgt = u.find(".//{*}target")
+
+    except Exception as e:
+        print(f"[WARN] XPath namespace fallback: {e}")
+        # Fallback final: busca manual sem XPath
+        for u in root.findall(".//trans-unit"):
+            src = u.find("source")
+            tgt = u.find("target")
             if src is not None:
                 pairs.append((src, tgt))
     return pairs
