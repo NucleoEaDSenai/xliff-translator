@@ -1,10 +1,11 @@
-import os, time, re, base64, requests
+import os, time, re, base64
 from copy import deepcopy
 from typing import List, Tuple, Optional
 from pathlib import Path
 
 import streamlit as st
 from lxml import etree as ET
+from openai import OpenAI
 import streamlit.components.v1 as components
 
 # ===============================================
@@ -82,12 +83,21 @@ def restore_nontranslatable(text: str, tokens):
         return text
 
 # ===============================================
-# FUNÇÃO DE TRADUÇÃO VIA LIBRETRANSLATE (COM FALLBACK)
+# CONFIGURAÇÃO OPENAI
+# ===============================================
+# 🔒 NÃO COLOQUE SUA CHAVE DIRETO AQUI
+# Defina via variável de ambiente:
+# Windows PowerShell → $env:OPENAI_API_KEY="sua_chave_aqui"
+# Streamlit Cloud → Settings > Secrets > OPENAI_API_KEY="sua_chave_aqui"
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ===============================================
+# FUNÇÃO DE TRADUÇÃO VIA CHATGPT
 # ===============================================
 def translate_text_unit(text: str, target_lang: str) -> str:
     """
-    Tradução via LibreTranslate com fallback entre endpoints públicos.
-    Mantém placeholders e estrutura XML intacta.
+    Tradução via API da OpenAI (sua conta ChatGPT).
+    Mantém placeholders e tom instrucional.
     """
     text = safe_str(text)
     if not text.strip():
@@ -96,32 +106,28 @@ def translate_text_unit(text: str, target_lang: str) -> str:
     t, toks = protect_nontranslatable(text)
     out = t
 
-    endpoints = [
-        "https://libretranslate.com/translate",  # endpoint principal
-        "https://translate.argosopentech.com/translate",  # backup 1
-        "https://translate.astian.org/translate",  # backup 2
-    ]
+    try:
+        prompt = f"""
+        Traduza o texto abaixo para {target_lang}.
+        Mantenha todas as tags, placeholders e variáveis intactas (como §§K0§§, {{ }}, %s, etc.).
+        Use linguagem técnica e didática, adequada a cursos de formação profissional, saúde, petróleo e gás e toda rede petrolífera.
+        Seja fiel ao sentido e preserve o formato.
 
-    payload = {
-        "q": t,
-        "source": "auto",  # detecta automaticamente idioma de origem
-        "target": target_lang,
-        "format": "text"
-    }
+        Texto original:
+        {t}
+        """
 
-    headers = {"Content-Type": "application/json"}
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # você pode trocar para "gpt-5" se quiser máxima qualidade
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        translated = response.choices[0].message.content.strip()
+        out = translated
 
-    for url in endpoints:
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=30)
-            if resp.status_code == 200 and "translatedText" in resp.json():
-                out = resp.json()["translatedText"]
-                break
-            else:
-                print(f"[ERRO {resp.status_code}] em {url}: {resp.text}")
-        except Exception as e:
-            print(f"[ERRO LIBRETRANSLATE - {url}] {e}")
-            continue
+    except Exception as e:
+        print(f"[ERRO GPT] {e}")
+        out = t
 
     return safe_str(restore_nontranslatable(out, toks))
 

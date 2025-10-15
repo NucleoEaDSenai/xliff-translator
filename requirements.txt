@@ -1,3 +1,3 @@
 streamlit
 lxml
-requests
+openai>=1.13.3
