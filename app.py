@@ -8,7 +8,7 @@ from lxml import etree as ET
 from deep_translator import GoogleTranslator
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="wide")
+st.set_page_config(page_title="Tradutor XLIFF \u2022 Firjan SENAI", page_icon="\U0001F30D", layout="wide")
 
 PRIMARY = "#83c7e5"
 st.markdown(f"""
@@ -53,7 +53,7 @@ def protect_nontranslatable(text:str):
     tokens=[]
     def _sub(m):
         tokens.append(m.group(0))
-        return f"§§K{len(tokens)-1}§§"
+        return f"\u00A7\u00A7K{len(tokens)-1}\u00A7\u00A7"
     try:
         protected = PLACEHOLDER_RE.sub(_sub, text)
     except:
@@ -67,7 +67,7 @@ def restore_nontranslatable(text:str, tokens):
         def _r(m):
             i = int(m.group(1))
             return tokens[i] if 0 <= i < len(tokens) else m.group(0)
-        return re.sub(r"§§K(\d+)§§", _r, text)
+        return re.sub(r"\u00A7\u00A7K(\d+)\u00A7\u00A7", _r, text)
     except:
         return text
 
@@ -141,30 +141,29 @@ def translate_accessibility_attrs(root:ET._Element, lang:str):
                 if val.strip():
                     el.attrib[k]=translate_text_unit(val, lang)
 
-# 🩹 Correção completa de espaçamento entre tags e texto
+# \U0001FA79 Correção completa de espaçamento entre tags e texto
 def fix_spacing_around_tags(root):
     """
     Corrige falta de espaços entre texto e tags (ex: <b>, <i>, <strong>).
     Exemplo: 'el<b>periodo</b>y' → 'el <b>periodo</b> y'
     """
     for el in root.iter():
+        # Garante espaço antes da primeira tag inline, se necessário
         for child in list(el):
-            # Se o texto antes da primeira tag não termina com espaço
-            if el.text and child is el[0] and not el.text.endswith((" ", "\n")):
+            if el.text and child is el[0] and not el.text.endswith((" ", "\n", "\t")):
                 el.text += " "
-            # Se a tail (texto após a tag) existe e não começa com espaço
+            # Garante que exista um espaço ANTES do conteúdo de tail
             if child.tail:
-                if not child.tail.startswith((" ", "\n")):
+                if not child.tail.startswith((" ", "\n", "\t")):
                     child.tail = " " + child.tail
+                # Normaliza duplicidades no restante, mas sem strip() nas bordas
+                child.tail = re.sub(r"\s{2,}", " ", child.tail)
             else:
-                # Se não há tail, cria espaço para não colar
+                # Cria uma tail com espaço para não "colar" texto após a tag
                 child.tail = " "
-        # Limpa duplicidades
+        # Normaliza duplicidades no texto do elemento, sem strip()
         if el.text:
-            el.text = re.sub(r'\s{2,}', ' ', el.text.strip())
-        for child in list(el):
-            if child.tail:
-                child.tail = re.sub(r'\s{2,}', ' ', child.tail.strip() + " ")
+            el.text = re.sub(r"\s{2,}", " ", el.text)
 
 PT_FULL = {
     "es":"Espanhol","en":"Inglês","fr":"Francês","de":"Alemão","it":"Italiano","pt":"Português"
@@ -206,7 +205,7 @@ components.html("""
     const dz = doc.querySelector('[data-testid="stFileUploaderDropzone"]');
     if (!dz) return false;
     replaceText(dz, t => /drag and drop/i.test(t), "Arraste e solte o arquivo aqui");
-    replaceText(dz, t => /limit.*xlf|limit\\s*200\\s*mb/i.test(t), "Limite de 200 MB por arquivo • XLF, XLIFF");
+    replaceText(dz, t => /limit.*xlf|limit\\s*200\\s*mb/i.test(t), "Limite de 200 MB por arquivo \u2022 XLF, XLIFF");
     const btn = doc.querySelector('[data-testid="stFileUploader"] button');
     if (btn) {
       const lbl = btn.querySelector("p, span, div");
@@ -232,11 +231,13 @@ def process(data: bytes, lang_code: str, prog, status):
         translate_node_texts(src, lang_code)
         tgt = ensure_target_for_source(src, tgt)
         tgt.clear()
+        # \u2705 Preserva tail de TODOS os filhos, evitando colagem com <b>/<strong> etc.
         for ch in list(src):
-            tgt.append(deepcopy(ch))
+            c = deepcopy(ch)
+            c.tail = safe_str(ch.tail)
+            tgt.append(c)
         tgt.text = safe_str(src.text)
-        if len(src):
-            tgt[-1].tail = safe_str(src[-1].tail)
+        # (Removido: atribuição apenas da tail do último filho)
         if i == 1 or i % 10 == 0 or i == total:
             frac = i / total
             percent = int(round(frac * 100))
@@ -244,7 +245,7 @@ def process(data: bytes, lang_code: str, prog, status):
             status.text(f"{percent}% concluído…")
     translate_all_notes(root, lang_code)
     translate_accessibility_attrs(root, lang_code)
-    fix_spacing_around_tags(root)  # 🔧 chamada final que resolve o espaçamento
+    fix_spacing_around_tags(root)  # \U0001F527 chamada final que resolve o espaçamento
     prog.progress(1.0)
     status.text("100% concluído — finalizando arquivo…")
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
