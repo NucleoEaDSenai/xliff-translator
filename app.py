@@ -92,6 +92,159 @@ def get_namespaces(root)->dict:
     return nsmap
 
 def detect_version(root)->str:
+
+# ========= Utilitários específicos para Storyline =========
+def set_target_language(root, lang_code: str):
+    """
+    Define o idioma de destino no XLIFF:
+    - XLIFF 1.2: atributo target-language no <file>
+    - XLIFF 2.0: atributo trgLang no <xliff>
+    Faz um pequeno mapeamento para códigos regionais comuns.
+    """
+    # Mapeamentos simples e seguros
+    MAP = {
+        "pt": "pt-BR", "en": "en-US", "es": "es-ES", "fr": "fr-FR", "de": "de-DE", "it": "it-IT"
+    }
+    v = detect_version(root)
+    # tenta inferir a localidade do source, se existir
+    source_lang = None
+    if v == "1.2":
+        file_el = root.find(".//{*}file")
+        if file_el is not None:
+            source_lang = file_el.get("source-language")
+    else:
+        source_lang = root.get("srcLang")
+    # usa mapeamento simples; se já houver sufixo regional no source, tenta reaproveitar a parte regional
+    target = MAP.get(lang_code, lang_code)
+    if source_lang and "-" in source_lang and "-" not in target:
+        # reaproveita região do source (ex.: pt-BR -> es-BR)
+        region = source_lang.split("-",1)[1]
+        target = f"{lang_code}-{region}"
+    if v == "1.2":
+        file_el = root.find(".//{*}file")
+        if file_el is not None:
+            file_el.set("target-language", target)
+    else:
+        root.set("trgLang", target)
+
+def set_storyline_target_state(root, state_value="translated"):
+    """
+    Garante que todos os <target> tenham state="translated" (ou o valor informado).
+    Isto evita warnings de ferramentas que esperam um estado explícito.
+    """
+    for tgt in root.findall(".//{*}target"):
+        # Não sobrescreve se já existir um state mais forte (ex.: final)
+        if "state" not in tgt.attrib:
+            tgt.set("state", state_value)
+
+def protect_nontranslatable_storyline(text: str):
+    """
+    Protege tokens comuns do Storyline para não serem traduzidos:
+    - Variáveis %NomeDaVariavel%
+    - URLs, e-mails, entidades HTML/XML
+    - Números/datas
+    Retorna (texto_com_placeholders, lista_tokens)
+    """
+    text = "" if text is None else str(text)
+    if not text:
+        return "", []
+    patterns = [
+        r'https?://\S+',
+        r'www\.\S+',
+        r'[\w\.-]+@[\w\.-]+\.\w+',
+        r'%[^%\n\r]+%',
+        r'&[#xX]?[0-9A-Fa-f]+;|&[A-Za-z]+;',
+        r'\b\d[\d\.,/:_-]*\b',
+    ]
+    tokens = []
+    def repl(m):
+        i = len(tokens)
+        tokens.append(m.group(0))
+        return f"__TK{i}__"
+    for pat in patterns:
+        text = re.sub(pat, repl, text)
+    return text, tokens
+
+def restore_nontranslatable_storyline(text: str, tokens):
+    text = "" if text is None else str(text)
+    for i in range(len(tokens)-1, -1, -1):
+        text = text.replace(f"__TK{i}__", tokens[i])
+    return text
+
+def translate_text_unit_storyline(text: str, target_lang: str) -> str:
+    # usa proteção específica, depois traduz, depois restaura
+    text = "" if text is None else str(text)
+    if not text.strip():
+        return text
+    t, toks = protect_nontranslatable_storyline(text)
+    out = t
+    try:
+        from deep_translator import GoogleTranslator
+        out = str(GoogleTranslator(source="auto", target=target_lang).translate(t))
+    except Exception:
+        out = t
+    return restore_nontranslatable_storyline(out, toks)
+
+def translate_node_texts_storyline(elem, lang: str):
+    if elem.text is not None and str(elem.text).strip():
+        elem.text = translate_text_unit_storyline(elem.text, lang)
+    for child in list(elem):
+        translate_node_texts_storyline(child, lang)
+        if child.tail is not None and str(child.tail).strip():
+            child.tail = translate_text_unit_storyline(child.tail, lang)
+
+def process_storyline(data: bytes, lang_code: str, prog, status):
+    """
+    Tradução Storyline:
+    - NÃO altera <source>; traduz só o texto para <target> (mantendo tags inline)
+    - Ajusta target-language (1.2) ou trgLang (2.0)
+    - Seta state="translated" nos <target>
+    - Mantém notas e atributos de acessibilidade traduzidos
+    """
+    parser = ET.XMLParser(remove_blank_text=False)
+    root = ET.fromstring(data, parser=parser)
+    pairs = iter_source_target_pairs(root)
+    total = max(len(pairs), 1)
+    status.text("0% concluído…")
+    prog.progress(0.0)
+
+    for i, (src, tgt) in enumerate(pairs, start=1):
+        # traduzimos uma cópia do <source> e escrevemos no <target>
+        tmp = deepcopy(src)
+        translate_node_texts_storyline(tmp, lang_code)
+
+        tgt = ensure_target_for_source(src, tgt)
+        tgt.clear()
+        for ch in list(tmp):
+            tgt.append(ch)
+        tgt.text = "" if tmp.text is None else str(tmp.text)
+        if len(tmp):
+            tgt[-1].tail = "" if tmp[-1].tail is None else str(tmp[-1].tail)
+
+        # Marca estado
+        if "state" not in tgt.attrib:
+            tgt.set("state", "translated")
+
+        if i == 1 or i % 10 == 0 or i == total:
+            frac = i / total
+            percent = int(round(frac * 100))
+            prog.progress(frac)
+            status.text(f"{percent}% concluído…")
+
+    # Notas e atributos
+    translate_all_notes(root, lang_code)
+    translate_accessibility_attrs(root, lang_code)
+
+    # Idioma alvo apropriado no cabeçalho
+    set_target_language(root, lang_code)
+
+    # Ajustes finais de espaçamento
+    fix_spacing_around_tags(root)
+
+    prog.progress(1.0)
+    status.text("100% concluído — finalizando arquivo…")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
+
     d = root.nsmap.get(None,"") or ""
     if "urn:oasis:names:tc:xliff:document:2.0" in d or (root.get("version","")== "2.0"):
         return "2.0"
@@ -245,6 +398,16 @@ lang_code = dict(options)[language_label]
 
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
 
+
+# Seletor de formato (mantém Rise intacto; adiciona Storyline)
+xliff_flavor = st.radio(
+    "Formato do XLIFF",
+    ["Articulate Rise (padrão)", "Articulate Storyline"],
+    index=0,
+    help="O Storyline usa XLIFF com requisitos específicos de cabeçalho/estado."
+)
+
+
 components.html("""
 <script>
 (function () {
@@ -304,6 +467,7 @@ def process(data: bytes, lang_code: str, prog, status):
     status.text("100% concluído — finalizando arquivo…")
     return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
 
+
 if run:
     if not uploaded:
         st.error("Envie um arquivo .xlf/.xliff.")
@@ -319,13 +483,20 @@ if run:
     status = st.empty()
     try:
         with st.spinner("Traduzindo…"):
-            out_bytes = process(data, lang_code, prog, status)
+            if xliff_flavor == "Articulate Storyline":
+                out_bytes = process_storyline(data, lang_code, prog, status)
+                base = os.path.splitext(uploaded.name)[0]
+                out_name = f"{base}-storyline-{lang_code}.xlf"
+            else:
+                # Mantém o fluxo original do Rise (process)
+                out_bytes = process(data, lang_code, prog, status)
+                base = os.path.splitext(uploaded.name)[0]
+                out_name = f"{base}-{lang_code}.xlf"
         st.success("Tradução concluída!")
-        base = os.path.splitext(uploaded.name)[0]
-        out_name = f"{base}-{lang_code}.xlf"
         st.download_button("Baixar XLIFF traduzido", data=out_bytes, file_name=out_name, mime="application/xliff+xml")
     except Exception as e:
         st.error(f"Erro ao traduzir: {e}")
+
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.markdown("<div class='footer'>Direitos Reservados à Área de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
