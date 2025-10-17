@@ -92,6 +92,10 @@ def get_namespaces(root)->dict:
     return nsmap
 
 def detect_version(root)->str:
+    d = root.nsmap.get(None,"") or ""
+    if "urn:oasis:names:tc:xliff:document:2.0" in d or (root.get("version","")== "2.0"):
+        return "2.0"
+    return "1.2"
 
 # ========= Utilitários específicos para Storyline =========
 def set_target_language(root, lang_code: str):
