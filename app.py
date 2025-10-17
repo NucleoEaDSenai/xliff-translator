@@ -13,285 +13,109 @@ st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍
 PRIMARY = "#83c7e5"
 st.markdown(f"""
 <style>
-body {{ background:#000; color:#fff; }}
-.block-container {{ padding-top: 1.2rem; max-width: 1280px; }}
-h1,h2,h3,p,span,div,label,small {{ color:#fff !important; }}
-.stButton>button {{ background:#333; color:{PRIMARY}; font-weight:700; border:none; border-radius:8px; padding:.6rem 1rem; }}
-.stProgress > div > div > div > div {{ background-color: {PRIMARY}; }}
-hr {{ border: 0; border-top: 1px solid #222; margin: 24px 0; }}
-.footer {{ text-align:center; color:#aaa; font-size:12px; margin-top:32px; }}
-.stSelectbox > div {{ width: 100% !important; }}
-div[data-baseweb="select"] {{ min-width: 720px !important; }}
+body { background:#000; color:#fff; }
+section.main > div { max-width: 1200px; margin: 0 auto; }
+.stButton>button { background:{PRIMARY}; color:#000; font-weight:700; border:none; }
+.stProgress > div > div > div > div { background:{PRIMARY}; }
+hr { border: 0; border-top: 1px solid #333; margin: 24px 0; }
+.footer { opacity: .6; font-size: 12px; margin-top: 12px; }
+.codebox { background:#111; border:1px solid #222; padding:12px; border-radius:8px; }
+.radio-group label { margin-right:12px; }
 </style>
 """, unsafe_allow_html=True)
 
+# =================== UI helpers ===================
 def show_logo():
-    p = Path(__file__).parent / "firjan_senai_branco_horizontal.png"
-    if p.exists():
-        b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
-        st.markdown(
-            f"""
-            <div style="width:100%;display:flex;justify-content:left;margin-bottom:4px;">
-              <img src="data:image/png;base64,{b64}" style="max-width:250px;width:100%;height:100px;display:block;" />
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    svg = """
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2L2 7l10 5 10-5-10-5Zm0 7L2 4v13l10 5 10-5V4l-10 5Z" fill="#83c7e5"/>
+    </svg>
+    """
+    st.markdown(f"<div style='display:flex;gap:12px;align-items:center'><div>{svg}</div><h2 style='margin:0'>Tradutor XLIFF</h2></div>", unsafe_allow_html=True)
 
 show_logo()
-st.markdown("<h1 style='text-align:center; margin-top:0;'>Tradutor de Cursos - Articulate Rise</h1>", unsafe_allow_html=True)
-st.caption("Tradução completa de cursos do Português para outras línguas")
 
-def safe_str(x)->str:
-    return "" if x is None else str(x)
+# =================== Safety ===================
+def safe_str(x):
+    if x is None:
+        return ""
+    try:
+        return str(x)
+    except Exception:
+        return ""
 
-PLACEHOLDER_RE = re.compile(r"(\{\{.*?\}\}|\{.*?\}|%s|%d|%\(\w+\)s)")
+# =================== Nontranslatable protection ===================
+NONTRANS_PATTERNS = [
+    r"https?://\S+",
+    r"www\.\S+",
+    r"[\w\.-]+@[\w\.-]+\.\w+",
+    r"%[^%\n\r]+%",  # Storyline variables
+    r"&[#xX]?[0-9A-Fa-f]+;|&[A-Za-z]+;",  # HTML/XML entities
+    r"\b\d[\d\.,/:_-]*\b",  # numbers/dates
+]
 
 def protect_nontranslatable(text:str):
+    """
+    Replaces non-translatable tokens with placeholders and returns (text_with_placeholders, tokens).
+    """
     text = safe_str(text)
-    if not text: return "", []
-    tokens=[]
-    def _sub(m):
-        tokens.append(m.group(0))
-        return f"§§K{len(tokens)-1}§§"
-    try:
-        protected = PLACEHOLDER_RE.sub(_sub, text)
-    except:
-        protected = text
-    return protected, tokens
-
-def restore_nontranslatable(text:str, tokens):
-    text = safe_str(text)
-    if not tokens: return text
-    try:
-        def _r(m):
-            i = int(m.group(1))
-            return tokens[i] if 0 <= i < len(tokens) else m.group(0)
-        return re.sub(r"§§K(\d+)§§", _r, text)
-    except:
-        return text
-
-def translate_text_unit(text:str, target_lang:str)->str:
-    text = safe_str(text)
-    if not text.strip(): return text
-    t, toks = protect_nontranslatable(text)
-    out = t
-    try:
-        out = safe_str(GoogleTranslator(source="auto", target=target_lang).translate(t))
-    except:
-        out = t
-    return safe_str(restore_nontranslatable(out, toks))
-
-def get_namespaces(root)->dict:
-    nsmap={}
-    if root.nsmap:
-        for k,v in root.nsmap.items():
-            nsmap[k if k is not None else "ns"]=v
-    if not nsmap:
-        nsmap={"ns":"urn:oasis:names:tc:xliff:document:1.2"}
-    return nsmap
-
-def detect_version(root)->str:
-    d = root.nsmap.get(None,"") or ""
-    if "urn:oasis:names:tc:xliff:document:2.0" in d or (root.get("version","")== "2.0"):
-        return "2.0"
-    return "1.2"
-
-# ========= Utilitários específicos para Storyline =========
-
-
-def _looks_like_pseudo_xml(s: str) -> bool:
-    if not s: return False
-    s = str(s)
-    return bool(re.search(r'(?:<[^>]+>|&lt;[^&]+&gt;)', s))
-
-def _translate_attr_values_in_pseudo_xml(s: str, lang: str) -> str:
-    """
-    Traduz SOMENTE valores de atributos textuais em strings pseudo-XML:
-      Text=  Label=  Alt=  Title=  Tooltip=  Value=
-    Preserva nomes de tags, nomes de atributos e qualquer outro conteúdo.
-    Funciona tanto com aspas duplas quanto simples.
-    """
-    if not s: return s
-    s = str(s)
-
-    def _tx(text):
-        # usa o mesmo pipeline protegido do Storyline
-        return translate_text_unit_storyline(text, lang)
-
-    attrs = ("Text","Label","Alt","Title","Tooltip","Value")
-    for attr in attrs:
-        # Aspas duplas
-        pat_dq = rf'({attr}\s*=\s*")([^"]*?)(")'
-        s = re.sub(pat_dq, lambda m: f'{attr}="{_tx(m.group(2))}"', s)
-        # Aspas simples
-        pat_sq = rf"({attr}\s*=\s*')([^']*?)(')"
-        s = re.sub(pat_sq, lambda m: f"{attr}='{_tx(m.group(2))}'", s)
-    return s
-
-def set_target_language(root, lang_code: str):
-    """
-    Define o idioma de destino no XLIFF:
-    - XLIFF 1.2: atributo target-language no <file>
-    - XLIFF 2.0: atributo trgLang no <xliff>
-    Faz um pequeno mapeamento para códigos regionais comuns.
-    """
-    # Mapeamentos simples e seguros
-    MAP = {
-        "pt": "pt-BR", "en": "en-US", "es": "es-ES", "fr": "fr-FR", "de": "de-DE", "it": "it-IT"
-    }
-    v = detect_version(root)
-    # tenta inferir a localidade do source, se existir
-    source_lang = None
-    if v == "1.2":
-        file_el = root.find(".//{*}file")
-        if file_el is not None:
-            source_lang = file_el.get("source-language")
-    else:
-        source_lang = root.get("srcLang")
-    # usa mapeamento simples; se já houver sufixo regional no source, tenta reaproveitar a parte regional
-    target = MAP.get(lang_code, lang_code)
-    if source_lang and "-" in source_lang and "-" not in target:
-        # reaproveita região do source (ex.: pt-BR -> es-BR)
-        region = source_lang.split("-",1)[1]
-        target = f"{lang_code}-{region}"
-    if v == "1.2":
-        file_el = root.find(".//{*}file")
-        if file_el is not None:
-            file_el.set("target-language", target)
-    else:
-        root.set("trgLang", target)
-
-def set_storyline_target_state(root, state_value="translated"):
-    """
-    Garante que todos os <target> tenham state="translated" (ou o valor informado).
-    Isto evita warnings de ferramentas que esperam um estado explícito.
-    """
-    for tgt in root.findall(".//{*}target"):
-        # Não sobrescreve se já existir um state mais forte (ex.: final)
-        if "state" not in tgt.attrib:
-            tgt.set("state", state_value)
-
-def protect_nontranslatable_storyline(text: str):
-    """
-    Protege tokens comuns do Storyline para não serem traduzidos:
-    - Variáveis %NomeDaVariavel%
-    - URLs, e-mails, entidades HTML/XML
-    - Números/datas
-    Retorna (texto_com_placeholders, lista_tokens)
-    """
-    text = "" if text is None else str(text)
     if not text:
         return "", []
-    patterns = [
-        r'https?://\S+',
-        r'www\.\S+',
-        r'[\w\.-]+@[\w\.-]+\.\w+',
-        r'%[^%\n\r]+%',
-        r'&[#xX]?[0-9A-Fa-f]+;|&[A-Za-z]+;',
-        r'\b\d[\d\.,/:_-]*\b',
-    ]
     tokens = []
     def repl(m):
-        i = len(tokens)
+        idx = len(tokens)
         tokens.append(m.group(0))
-        return f"__TK{i}__"
-    for pat in patterns:
+        return f"__TK{idx}__"
+    for pat in NONTRANS_PATTERNS:
         text = re.sub(pat, repl, text)
     return text, tokens
 
-def restore_nontranslatable_storyline(text: str, tokens):
-    text = "" if text is None else str(text)
+def restore_nontranslatable(text:str, tokens):
+    text = safe_str(text)
+    if not tokens:
+        return text
     for i in range(len(tokens)-1, -1, -1):
         text = text.replace(f"__TK{i}__", tokens[i])
     return text
 
-def translate_text_unit_storyline(text: str, target_lang: str) -> str:
-    # usa proteção específica, depois traduz, depois restaura
-    text = "" if text is None else str(text)
+# =================== Translation core ===================
+def translate_text_unit(text:str, target_lang:str)->str:
+    text = safe_str(text)
     if not text.strip():
         return text
-    t, toks = protect_nontranslatable_storyline(text)
+    t, toks = protect_nontranslatable(text)
     out = t
     try:
-        from deep_translator import GoogleTranslator
-        out = str(GoogleTranslator(source="auto", target=target_lang).translate(t))
+        out = safe_str(GoogleTranslator(source="auto", target=target_lang).translate(t))
     except Exception:
         out = t
-    return restore_nontranslatable_storyline(out, toks)
+    return safe_str(restore_nontranslatable(out, toks))
 
-def translate_node_texts_storyline(elem, lang: str):
-    if elem.text is not None and str(elem.text).strip():
-        elem.text = (
-            _translate_attr_values_in_pseudo_xml(elem.text, lang)
-            if _looks_like_pseudo_xml(elem.text)
-            else translate_text_unit_storyline(elem.text, lang)
-        )
-    for child in list(elem):
-        translate_node_texts_storyline(child, lang)
-        if child.tail is not None and str(child.tail).strip():
-            child.tail = (
-                _translate_attr_values_in_pseudo_xml(child.tail, lang)
-                if _looks_like_pseudo_xml(child.tail)
-                else translate_text_unit_storyline(child.tail, lang)
-            )
+# =================== XLIFF helpers ===================
+def get_google_lang_pairs():
+    return {
+        "Português → Espanhol": ("pt", "es"),
+        "Português → Inglês": ("pt", "en"),
+        "Inglês → Espanhol": ("en", "es"),
+        "Inglês → Português": ("en", "pt"),
+        "Espanhol → Português": ("es", "pt"),
+        "Espanhol → Inglês": ("es", "en"),
+    }
 
-def process_storyline(data: bytes, lang_code: str, prog, status):
-    """
-    Tradução Storyline:
-    - NÃO altera <source>; traduz só o texto para <target> (mantendo tags inline)
-    - Ajusta target-language (1.2) ou trgLang (2.0)
-    - Seta state="translated" nos <target>
-    - Mantém notas e atributos de acessibilidade traduzidos
-    """
-    parser = ET.XMLParser(remove_blank_text=False)
-    root = ET.fromstring(data, parser=parser)
-    pairs = iter_source_target_pairs(root)
-    total = max(len(pairs), 1)
-    status.text("0% concluído…")
-    prog.progress(0.0)
-
-    for i, (src, tgt) in enumerate(pairs, start=1):
-        # traduzimos uma cópia do <source> e escrevemos no <target>
-        tmp = deepcopy(src)
-        translate_node_texts_storyline(tmp, lang_code)
-
-        tgt = ensure_target_for_source(src, tgt)
-        tgt.clear()
-        for ch in list(tmp):
-            tgt.append(ch)
-        tgt.text = "" if tmp.text is None else str(tmp.text)
-        if len(tmp):
-            tgt[-1].tail = "" if tmp[-1].tail is None else str(tmp[-1].tail)
-
-        # Marca estado
-        if "state" not in tgt.attrib:
-            tgt.set("state", "translated")
-
-        if i == 1 or i % 10 == 0 or i == total:
-            frac = i / total
-            percent = int(round(frac * 100))
-            prog.progress(frac)
-            status.text(f"{percent}% concluído…")
-
-    # Notas e atributos
-    translate_all_notes(root, lang_code)
-    translate_accessibility_attrs(root, lang_code)
-
-    # Idioma alvo apropriado no cabeçalho
-    set_target_language(root, lang_code)
-
-    # Ajustes finais de espaçamento
-    fix_spacing_around_tags(root)
-
-    prog.progress(1.0)
-    status.text("100% concluído — finalizando arquivo…")
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
-
+def detect_version(root)->str:
     d = root.nsmap.get(None,"") or ""
-    if "urn:oasis:names:tc:xliff:document:2.0" in d or (root.get("version","")== "2.0"):
+    if "urn:oasis:names:tc:xliff:document:2.0" in d or (root.get("version","") == "2.0"):
         return "2.0"
     return "1.2"
+
+def get_namespaces(root):
+    nsmap = {}
+    if root.nsmap:
+        for k,v in root.nsmap.items():
+            nsmap[k if k is not None else "ns"] = v
+    if not nsmap:
+        nsmap = {"ns":"urn:oasis:names:tc:xliff:document:1.2"}
+    return nsmap
 
 def iter_source_target_pairs(root)->List[Tuple[ET._Element, Optional[ET._Element]]]:
     ns=get_namespaces(root)
@@ -311,136 +135,261 @@ def iter_source_target_pairs(root)->List[Tuple[ET._Element, Optional[ET._Element
             if src is not None: pairs.append((src,tgt))
     return pairs
 
-def ensure_target_for_source(src:ET._Element, tgt:Optional[ET._Element])->ET._Element:
-    if tgt is not None: return tgt
-    qn=ET.QName(src); tag=qn.localname.replace("source","target")
-    return ET.SubElement(src.getparent(), f"{{{qn.namespace}}}{tag}") if qn.namespace else ET.SubElement(src.getparent(),"target")
+def ensure_target_for_source(src, tgt):
+    parent = src.getparent()
+    if tgt is None:
+        tgt = ET.Element("{%s}target" % (parent.nsmap.get(None) or "urn:oasis:names:tc:xliff:document:1.2"))
+        parent.append(tgt)
+    return tgt
 
+# =================== Text traversal ===================
 def translate_node_texts(elem:ET._Element, lang:str):
-    if elem.text is not None and safe_str(elem.text).strip():
+    if elem.text is not None and elem.text.strip():
         elem.text = translate_text_unit(elem.text, lang)
     for child in list(elem):
         translate_node_texts(child, lang)
-        if child.tail is not None and safe_str(child.tail).strip():
+        if child.tail is not None and child.tail.strip():
             child.tail = translate_text_unit(child.tail, lang)
 
-def translate_all_notes(root:ET._Element, lang:str):
+# =================== Notes & Accessibility ===================
+def translate_all_notes(root, lang):
     for note in root.findall(".//{*}note"):
-        translate_node_texts(note, lang)
+        if note.text and note.text.strip():
+            note.text = translate_text_unit(note.text, lang)
 
-def translate_accessibility_attrs(root:ET._Element, lang:str):
-    ATTRS=("title","alt","aria-label")
+A11Y_ATTRS = ["title","alt","aria-label","aria-placeholder","aria-roledescription","data-title","data-alt"]
+
+def translate_accessibility_attrs(root, lang):
     for el in root.iter():
-        for k in ATTRS:
-            if k in el.attrib:
-                val=safe_str(el.attrib.get(k))
-                if val.strip():
-                    el.attrib[k]=translate_text_unit(val, lang)
+        for a in A11Y_ATTRS:
+            if a in el.attrib and el.attrib[a].strip():
+                el.attrib[a] = translate_text_unit(el.attrib[a], lang)
 
-# 🩹 Correção completa de espaçamento entre tags e texto
+# =================== Spacing fix ===================
+def _needs_space(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a[-1].isalnum() and b[0].isalnum():
+        return True
+    if a[-1] in ",.;:!?" and b[0].isalnum():
+        return True
+    return False
 
-# \U0001FA79 Correção completa de espaçamento entre tags e texto (versão robusta)
-ALNUM_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]")
-
-def _first_char_of_node(node):
-    # Primeiro caractere "visível" do conteúdo do elemento
-    if node.text and node.text.strip():
-        return node.text.strip()[0]
-    for c in list(node):
-        ch = _first_char_of_node(c)
-        if ch:
-            return ch
-        if c.tail and c.tail.strip():
-            return c.tail.strip()[0]
-    return None
-
-def _last_char_of_node(node):
-    # Último caractere "visível" do conteúdo do elemento
-    # Considera texto, filhos e tails
-    last = None
-    if node.text and node.text.strip():
-        last = node.text.strip()[-1]
-    for c in list(node):
-        # conteúdo do filho
-        ch = _last_char_of_node(c)
-        if ch:
-            last = ch
-        # tail do filho
-        if c.tail and c.tail.strip():
-            last = c.tail.strip()[-1]
-    return last
-
-def _needs_space(a, b):
-    # Se ambos são alfanuméricos, precisamos de espaço
-    return bool(a and b and ALNUM_RE.match(a) and ALNUM_RE.match(b))
-
-def fix_spacing_around_tags(root):
-    """
-    Garante que haja espaço entre texto "colado" e marcas inline.
-    Ex.: 'Oi<b>Tudo</b>bem' -> 'Oi <b>Tudo</b> bem'
-    Funciona para quaisquer tags inline (b, strong, i, g, mrk, ph, etc.) típicas de XLIFF.
-    Evita acrescentar espaços antes de pontuação.
-    """
+def fix_spacing_around_tags(root:ET._Element):
     for el in root.iter():
-        children = list(el)
-        if not children:
+        kids = list(el)
+        if not kids:
             continue
-
-        # 1) Antes do primeiro filho
-        first = children[0]
-        prev_last = (el.text[-1] if el.text else None)
-        next_first = _first_char_of_node(first)
-        if (el.text is not None) and _needs_space(prev_last, next_first):
-            if not el.text.endswith((" ", "\n", "\t")):
-                el.text += " "
-
-        # 2) Entre filhos consecutivos
-        for i in range(len(children)):
-            cur = children[i]
-
-            # Entre fim do filho atual e início do próximo
-            cur_last = _last_char_of_node(cur)
-            nxt = children[i+1] if i + 1 < len(children) else None
+        for i, cur in enumerate(kids):
+            prev = kids[i-1] if i>0 else None
+            nxt = kids[i+1] if i+1 < len(kids) else None
+            if prev is not None:
+                if prev.tail and cur.text:
+                    if _needs_space(prev.tail, cur.text):
+                        prev.tail = prev.tail + " "
+                    prev.tail = re.sub(r"\s{2,}", " ", prev.tail)
+                elif prev.tail and not cur.text:
+                    prev.tail = re.sub(r"\s{2,}", " ", prev.tail)
+                elif not prev.tail and cur.text:
+                    if _needs_space(safe_str(prev.text), cur.text):
+                        cur.text = " " + cur.text
             if nxt is not None:
-                nxt_first = _first_char_of_node(nxt)
-                # atuar sobre cur.tail (texto após a tag atual)
-                if cur.tail is None:
-                    if _needs_space(cur_last, nxt_first):
-                        cur.tail = " "
+                if cur.text and nxt.text:
+                    if _needs_space(cur.text, nxt.text):
+                        cur.tail = safe_str(cur.tail)
+                        if not cur.tail:
+                            cur.tail = " "
+                        elif not cur.tail.startswith((" ", "\n", "\t")):
+                            cur.tail = " " + cur.tail
+                        cur.tail = re.sub(r"\s{2,}", " ", cur.tail)
                 else:
-                    if _needs_space(cur_last, nxt_first) and not cur.tail.startswith((" ", "\n", "\t")):
-                        cur.tail = " " + cur.tail
-                    # normaliza duplicidades mantendo bordas
-                    cur.tail = re.sub(r"\s{2,}", " ", cur.tail)
+                    cur.tail = safe_str(cur.tail)
+                    if cur.tail:
+                        if _needs_space(safe_str(cur.text), nxt.text or "") and not cur.tail.startswith((" ", "\n", "\t")):
+                            cur.tail = " " + cur.tail
+                        cur.tail = re.sub(r"\s{2,}", " ", cur.tail)
 
-        # 3) Normalização leve do texto do elemento (sem strip nas bordas)
-        if el.text:
-            el.text = re.sub(r"\s{2,}", " ", el.text)
+# =================== Storyline-specific utilities ===================
+# ========= Utilitários específicos para Storyline =========
+def set_target_language(root, lang_code: str):
+    """
+    Define o idioma de destino no XLIFF:
+    - XLIFF 1.2: atributo target-language no <file>
+    - XLIFF 2.0: atributo trgLang no <xliff>
+    Faz um pequeno mapeamento para códigos regionais comuns.
+    """
+    MAP = {
+        "pt": "pt-BR", "en": "en-US", "es": "es-ES", "fr": "fr-FR", "de": "de-DE", "it": "it-IT"
+    }
+    v = detect_version(root)
+    source_lang = None
+    if v == "1.2":
+        file_el = root.find(".//{*}file")
+        if file_el is not None:
+            source_lang = file_el.get("source-language")
+    else:
+        source_lang = root.get("srcLang")
+    target = MAP.get(lang_code, lang_code)
+    if source_lang and "-" in source_lang and "-" not in target:
+        region = source_lang.split("-",1)[1]
+        target = f"{lang_code}-{region}"
+    if v == "1.2":
+        file_el = root.find(".//{*}file")
+        if file_el is not None:
+            file_el.set("target-language", target)
+    else:
+        root.set("trgLang", target)
 
-PT_FULL = {
-    "es":"Espanhol","en":"Inglês","fr":"Francês","de":"Alemão","it":"Italiano","pt":"Português"
-}
+def set_storyline_target_state(root, state_value="translated"):
+    for tgt in root.findall(".//{*}target"):
+        if "state" not in tgt.attrib:
+            tgt.set("state", state_value)
 
-def get_google_lang_pairs():
+def protect_nontranslatable_storyline(text: str):
+    text = "" if text is None else str(text)
+    if not text:
+        return "", []
+    patterns = [
+        r'https?://\S+', r'www\.\S+', r'[\w\.-]+@[\w\.-]+\.\w+',
+        r'%[^%\n\r]+%', r'&[#xX]?[0-9A-Fa-f]+;|&[A-Za-z]+;', r'\b\d[\d\.,/:_-]*\b',
+    ]
+    tokens = []
+    def repl(m):
+        i = len(tokens)
+        tokens.append(m.group(0))
+        return f"__TK{i}__"
+    for pat in patterns:
+        text = re.sub(pat, repl, text)
+    return text, tokens
+
+def restore_nontranslatable_storyline(text: str, tokens):
+    text = "" if text is None else str(text)
+    for i in range(len(tokens)-1, -1, -1):
+        text = text.replace(f"__TK{i}__", tokens[i])
+    return text
+
+def translate_text_unit_storyline(text: str, target_lang: str) -> str:
+    text = "" if text is None else str(text)
+    if not text.strip():
+        return text
+    t, toks = protect_nontranslatable_storyline(text)
+    out = t
     try:
-        d = GoogleTranslator().get_supported_languages(as_dict=True)
-        pairs = list(d.items())
+        out = str(GoogleTranslator(source="auto", target=target_lang).translate(t))
     except Exception:
-        pairs = [("es","spanish"),("en","english"),("fr","french"),("de","german"),("it","italian")]
-    return pairs
+        out = t
+    return restore_nontranslatable_storyline(out, toks)
+
+def _looks_like_pseudo_xml(s: str) -> bool:
+    if not s: return False
+    s = str(s)
+    return bool(re.search(r'(?:<[^>]+>|&lt;[^&]+&gt;)', s))
+
+def _translate_attr_values_in_pseudo_xml(s: str, lang: str) -> str:
+    """
+    Traduz SOMENTE valores de atributos textuais em strings pseudo-XML:
+      Text=  Label=  Alt=  Title=  Tooltip=  Value=
+    Preserva nomes de tags, nomes de atributos e qualquer outro conteúdo.
+    Funciona tanto com aspas duplas quanto simples.
+    """
+    if not s: return s
+    s = str(s)
+    def _tx(text):
+        return translate_text_unit_storyline(text, lang)
+    attrs = ("Text","Label","Alt","Title","Tooltip","Value")
+    for attr in attrs:
+        pat_dq = rf'({attr}\s*=\s*")([^\"]*?)(")'
+        s = re.sub(pat_dq, lambda m: f'{attr}="{_tx(m.group(2))}"', s)
+        pat_sq = rf"({attr}\s*=\s*')([^']*?)(')"
+        s = re.sub(pat_sq, lambda m: f"{attr}='{_tx(m.group(2))}'", s)
+    return s
+
+def translate_node_texts_storyline(elem, lang: str):
+    if elem.text is not None and str(elem.text).strip():
+        elem.text = (
+            _translate_attr_values_in_pseudo_xml(elem.text, lang)
+            if _looks_like_pseudo_xml(elem.text)
+            else translate_text_unit_storyline(elem.text, lang)
+        )
+    for child in list(elem):
+        translate_node_texts_storyline(child, lang)
+        if child.tail is not None and str(child.tail).strip():
+            child.tail = (
+                _translate_attr_values_in_pseudo_xml(child.tail, lang)
+                if _looks_like_pseudo_xml(child.tail)
+                else translate_text_unit_storyline(child.tail, lang)
+            )
+
+# =================== Processors ===================
+def process(data: bytes, lang_code: str, prog, status):
+    parser = ET.XMLParser(remove_blank_text=False)
+    root = ET.fromstring(data, parser=parser)
+    pairs = iter_source_target_pairs(root)
+    total = max(len(pairs), 1)
+    status.text("0% concluído…")
+    prog.progress(0.0)
+    for i, (src, tgt) in enumerate(pairs, start=1):
+        tmp = deepcopy(src)  # translate only text
+        translate_node_texts(tmp, lang_code)
+        tgt = ensure_target_for_source(src, tgt)
+        tgt.clear()
+        for ch in list(tmp):
+            tgt.append(ch)
+        tgt.text = safe_str(tmp.text)
+        if len(tmp):
+            tgt[-1].tail = safe_str(tmp[-1].tail)
+        if i == 1 or i % 10 == 0 or i == total:
+            frac = i / total
+            percent = int(round(frac * 100))
+            prog.progress(frac)
+            status.text(f"{percent}% concluído…")
+    translate_all_notes(root, lang_code)
+    translate_accessibility_attrs(root, lang_code)
+    fix_spacing_around_tags(root)
+    prog.progress(1.0)
+    status.text("100% concluído — finalizando arquivo…")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
+
+def process_storyline(data: bytes, lang_code: str, prog, status):
+    parser = ET.XMLParser(remove_blank_text=False)
+    root = ET.fromstring(data, parser=parser)
+    pairs = iter_source_target_pairs(root)
+    total = max(len(pairs), 1)
+    status.text("0% concluído…")
+    prog.progress(0.0)
+    for i, (src, tgt) in enumerate(pairs, start=1):
+        tmp = deepcopy(src)
+        translate_node_texts_storyline(tmp, lang_code)
+        tgt = ensure_target_for_source(src, tgt)
+        tgt.clear()
+        for ch in list(tmp):
+            tgt.append(ch)
+        tgt.text = safe_str(tmp.text)
+        if len(tmp):
+            tgt[-1].tail = safe_str(tmp[-1].tail)
+        if "state" not in tgt.attrib:
+            tgt.set("state", "translated")
+        if i == 1 or i % 10 == 0 or i == total:
+            frac = i / total
+            percent = int(round(frac * 100))
+            prog.progress(frac)
+            status.text(f"{percent}% concluído…")
+    translate_all_notes(root, lang_code)
+    translate_accessibility_attrs(root, lang_code)
+    set_target_language(root, lang_code)
+    fix_spacing_around_tags(root)
+    prog.progress(1.0)
+    status.text("100% concluído — finalizando arquivo…")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
+
+# =================== UI ===================
+st.subheader("Tradução de XLIFF (Rise/Storyline)")
 
 pairs = get_google_lang_pairs()
-options = []
-for code, engname in pairs:
-    label = PT_FULL.get(code, engname.capitalize())
-    options.append((label, code))
-options.sort(key=lambda x: x[0])
-
-language_label = st.selectbox("Idioma de destino", [lbl for lbl,_ in options])
-lang_code = dict(options)[language_label]
+choice = st.selectbox("Selecione o par de idiomas", list(pairs.keys()), index=0)
+lang_code = pairs[choice][1]
 
 uploaded = st.file_uploader("Selecione o arquivo .xlf/.xliff do Rise", type=["xlf","xliff"])
-
 
 # Seletor de formato (mantém Rise intacto; adiciona Storyline)
 xliff_flavor = st.radio(
@@ -450,66 +399,7 @@ xliff_flavor = st.radio(
     help="O Storyline usa XLIFF com requisitos específicos de cabeçalho/estado."
 )
 
-
-components.html("""
-<script>
-(function () {
-  function replaceText(root, matcher, newText) {
-    const nodes = root.querySelectorAll("p, span, div");
-    for (const n of nodes) {
-      const t = (n.textContent || "").trim();
-      if (matcher(t)) { n.textContent = newText; return true; }
-    }
-    return false;
-  }
-  function inject() {
-    const doc = window.parent.document;
-    const dz = doc.querySelector('[data-testid="stFileUploaderDropzone"]');
-    if (!dz) return false;
-    replaceText(dz, t => /drag and drop/i.test(t), "Arraste e solte o arquivo aqui");
-    replaceText(dz, t => /limit.*xlf|limit\\s*200\\s*mb/i.test(t), "Limite de 200 MB por arquivo • XLF, XLIFF");
-    const btn = doc.querySelector('[data-testid="stFileUploader"] button');
-    if (btn) {
-      const lbl = btn.querySelector("p, span, div");
-      if (lbl) lbl.textContent = "Escolher arquivo";
-    }
-    return true;
-  }
-  const id = setInterval(function(){ if (inject()) clearInterval(id); }, 80);
-})();
-</script>
-""", height=0)
-
-run = st.button("Traduzir arquivo")
-
-def process(data: bytes, lang_code: str, prog, status):
-    parser = ET.XMLParser(remove_blank_text=False)
-    root = ET.fromstring(data, parser=parser)
-    pairs = iter_source_target_pairs(root)
-    total = max(len(pairs), 1)
-    status.text("0% concluído…")
-    prog.progress(0.0)
-    for i, (src, tgt) in enumerate(pairs, start=1):
-        translate_node_texts(src, lang_code)
-        tgt = ensure_target_for_source(src, tgt)
-        tgt.clear()
-        for ch in list(src):
-            tgt.append(deepcopy(ch))
-        tgt.text = safe_str(src.text)
-        if len(src):
-            tgt[-1].tail = safe_str(src[-1].tail)
-        if i == 1 or i % 10 == 0 or i == total:
-            frac = i / total
-            percent = int(round(frac * 100))
-            prog.progress(frac)
-            status.text(f"{percent}% concluído…")
-    translate_all_notes(root, lang_code)
-    translate_accessibility_attrs(root, lang_code)
-    fix_spacing_around_tags(root)  # 🔧 chamada final que resolve o espaçamento
-    prog.progress(1.0)
-    status.text("100% concluído — finalizando arquivo…")
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True, pretty_print=True)
-
+run = st.button("Executar tradução")
 
 if run:
     if not uploaded:
@@ -542,4 +432,4 @@ if run:
 
 
 st.markdown("<hr/>", unsafe_allow_html=True)
-st.markdown("<div class='footer'>Direitos Reservados à Área de Educação a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
+st.markdown("<div class='footer'>Direitos Reservados à Área de Ensino a Distância - Firjan SENAI Maracanã</div>", unsafe_allow_html=True)
