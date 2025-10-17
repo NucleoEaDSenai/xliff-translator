@@ -11,18 +11,49 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="wide")
 
 PRIMARY = "#83c7e5"
-st.markdown(f"""
-<style>
-body { background:#000; color:#fff; }
-section.main > div { max-width: 1200px; margin: 0 auto; }
-.stButton>button { background:{PRIMARY}; color:#000; font-weight:700; border:none; }
-.stProgress > div > div > div > div { background:{PRIMARY}; }
-hr { border: 0; border-top: 1px solid #333; margin: 24px 0; }
-.footer { opacity: .6; font-size: 12px; margin-top: 12px; }
-.codebox { background:#111; border:1px solid #222; padding:12px; border-radius:8px; }
-.radio-group label { margin-right:12px; }
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    f"""
+    <style>
+    body {{
+        background: #000;
+        color: #fff;
+    }}
+    section.main > div {{
+        max-width: 1200px;
+        margin: 0 auto;
+    }}
+    .stButton > button {{
+        background: {PRIMARY};
+        color: #000;
+        font-weight: 700;
+        border: none;
+    }}
+    .stProgress > div > div > div > div {{
+        background: {PRIMARY};
+    }}
+    hr {{
+        border: 0;
+        border-top: 1px solid #333;
+        margin: 24px 0;
+    }}
+    .footer {{
+        opacity: .6;
+        font-size: 12px;
+        margin-top: 12px;
+    }}
+    .codebox {{
+        background: #111;
+        border: 1px solid #222;
+        padding: 12px;
+        border-radius: 8px;
+    }}
+    .radio-group label {{
+        margin-right: 12px;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # =================== UI helpers ===================
 def show_logo():
