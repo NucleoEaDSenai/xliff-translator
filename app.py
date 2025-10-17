@@ -98,6 +98,37 @@ def detect_version(root)->str:
     return "1.2"
 
 # ========= Utilitários específicos para Storyline =========
+
+
+def _looks_like_pseudo_xml(s: str) -> bool:
+    if not s: return False
+    s = str(s)
+    return bool(re.search(r'(?:<[^>]+>|&lt;[^&]+&gt;)', s))
+
+def _translate_attr_values_in_pseudo_xml(s: str, lang: str) -> str:
+    """
+    Traduz SOMENTE valores de atributos textuais em strings pseudo-XML:
+      Text=  Label=  Alt=  Title=  Tooltip=  Value=
+    Preserva nomes de tags, nomes de atributos e qualquer outro conteúdo.
+    Funciona tanto com aspas duplas quanto simples.
+    """
+    if not s: return s
+    s = str(s)
+
+    def _tx(text):
+        # usa o mesmo pipeline protegido do Storyline
+        return translate_text_unit_storyline(text, lang)
+
+    attrs = ("Text","Label","Alt","Title","Tooltip","Value")
+    for attr in attrs:
+        # Aspas duplas
+        pat_dq = rf'({attr}\s*=\s*")([^"]*?)(")'
+        s = re.sub(pat_dq, lambda m: f'{attr}="{_tx(m.group(2))}"', s)
+        # Aspas simples
+        pat_sq = rf"({attr}\s*=\s*')([^']*?)(')"
+        s = re.sub(pat_sq, lambda m: f"{attr}='{_tx(m.group(2))}'", s)
+    return s
+
 def set_target_language(root, lang_code: str):
     """
     Define o idioma de destino no XLIFF:
@@ -191,11 +222,19 @@ def translate_text_unit_storyline(text: str, target_lang: str) -> str:
 
 def translate_node_texts_storyline(elem, lang: str):
     if elem.text is not None and str(elem.text).strip():
-        elem.text = translate_text_unit_storyline(elem.text, lang)
+        elem.text = (
+            _translate_attr_values_in_pseudo_xml(elem.text, lang)
+            if _looks_like_pseudo_xml(elem.text)
+            else translate_text_unit_storyline(elem.text, lang)
+        )
     for child in list(elem):
         translate_node_texts_storyline(child, lang)
         if child.tail is not None and str(child.tail).strip():
-            child.tail = translate_text_unit_storyline(child.tail, lang)
+            child.tail = (
+                _translate_attr_values_in_pseudo_xml(child.tail, lang)
+                if _looks_like_pseudo_xml(child.tail)
+                else translate_text_unit_storyline(child.tail, lang)
+            )
 
 def process_storyline(data: bytes, lang_code: str, prog, status):
     """
