@@ -11,6 +11,7 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Tradutor XLIFF • Firjan SENAI", page_icon="🌍", layout="wide")
 
 PRIMARY = "#83c7e5"
+PRIMARY_HOVER = "#3fa9d8"
 st.markdown(
     f"""
     <style>
@@ -22,11 +23,19 @@ st.markdown(
         max-width: 1200px;
         margin: 0 auto;
     }}
-    .stButton > button {{
+    .stButton > button, .stDownloadButton > button {{
         background: {PRIMARY};
         color: #000;
         font-weight: 700;
         border: none;
+        transition: transform .15s ease, background .15s ease;
+    }}
+    .stButton > button:hover, .stButton > button:focus-visible,
+    .stDownloadButton > button:hover, .stDownloadButton > button:focus-visible {{
+        background: {PRIMARY_HOVER} !important;
+        color: #000 !important;
+        border: none !important;
+        transform: scale(1.05);
     }}
     .stProgress > div > div > div > div {{
         background: {PRIMARY};
